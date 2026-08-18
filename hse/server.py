@@ -66,6 +66,39 @@ JOBS: dict[str, Job] = {}
 _detector = None
 
 
+def restore_jobs():
+    """작업 폴더를 훑어 지난 작업을 되살린다.
+
+    작업 목록을 메모리에만 두면 서버를 다시 켤 때마다 사라진다. 결과 파일은
+    디스크에 멀쩡히 있는데 UI에서는 404가 나서 받을 방법이 없어진다.
+    실제로 그 일이 나서 넣은 장치다.
+    """
+    if not os.path.isdir(WORK):
+        return
+    for jid in os.listdir(WORK):
+        d = os.path.join(WORK, jid)
+        if not os.path.isdir(d) or jid in JOBS:
+            continue
+        out = os.path.join(d, "output.mp4")
+        srcs = [f for f in os.listdir(d)
+                if f.lower().endswith((".mp4", ".mkv", ".mov", ".avi")) and f != "output.mp4"]
+        if not os.path.isfile(out) and not srcs:
+            continue
+        src = os.path.join(d, srcs[0]) if srcs else out
+        try:
+            info = probe(src)
+        except Exception:  # noqa: BLE001 — 깨진 폴더는 건너뛴다
+            continue
+        j = Job(id=jid, src=src, info=info)
+        if os.path.isfile(out):
+            j.status, j.out = "done", out
+            j.progress = 1.0
+        m = os.path.join(d, "mask.png")
+        if os.path.isfile(m):
+            j.mask = m
+        JOBS[jid] = j
+
+
 def detector():
     global _detector
     if _detector is None:
@@ -87,6 +120,9 @@ def _optint(v):
 
 def _job(jid) -> Job:
     j = JOBS.get(jid)
+    if not j:
+        restore_jobs()          # 서버 재시작으로 잊었을 수 있으니 디스크에서 찾아본다
+        j = JOBS.get(jid)
     if not j:
         raise HTTPException(404, "job not found")
     return j
@@ -119,6 +155,21 @@ async def create_job(file: UploadFile = File(None), path: str = Form(None)):
     job = Job(id=jid, src=src, info=info)
     JOBS[jid] = job
     return job.public()
+
+
+@app.get("/api/jobs")
+def list_jobs():
+    """지난 작업 목록. 서버를 다시 켜도 결과물을 다시 받을 수 있게 한다."""
+    restore_jobs()
+    rows = []
+    for j in JOBS.values():
+        row = j.public()
+        row["name"] = os.path.basename(j.src)
+        row["out_size"] = os.path.getsize(j.out) if (j.out and os.path.isfile(j.out)) else 0
+        row["mtime"] = os.path.getmtime(j.out) if (j.out and os.path.isfile(j.out)) else 0
+        rows.append(row)
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    return {"jobs": rows}
 
 
 @app.get("/api/jobs/{jid}")

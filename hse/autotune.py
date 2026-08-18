@@ -25,17 +25,27 @@ from .common import MODEL_H, MODEL_W
 _MB_PER_T = 170
 _BASE_MB = 500
 
-# (최소 VRAM MB, group_size, n_refs)
+# (최소 VRAM MB, 시작 group_size, n_refs)
+#
+# n_refs 는 품질을 좌우하므로 VRAM 여유에 따라 정한다.
+# group_size 는 속도를 좌우하는데 최적점이 GPU마다 다르고 절벽처럼 꺾이므로
+# 표에 박아두지 않고 아래 hill-climb 으로 실제로 찾는다.
+#
+# GTX 1060 3GB 실측: group 을 5에서 10으로 올리면 참조 수가 같은데도 1.41배
+# 빨라진다(3.99 -> 5.64 fps). 트랜스포머가 t 프레임을 처리해 group 개를 내놓으므로
+# group 을 키우면 같은 비용이 더 많은 출력에 분산된다. 단 t=20 을 넘으면
+# 공유 메모리로 밀려 0.18 -> 0.45 s/frame 으로 폭락한다.
 TABLE = [
     (7000, 6, 16),
-    (5000, 5, 14),
-    (3500, 5, 10),
-    (2500, 5, 8),    # GTX 1060 3GB 실측 최적점
+    (5000, 6, 12),
+    (3500, 6, 10),
+    (2500, 6, 8),
     (1600, 4, 5),
     (0,    3, 3),
 ]
 
-CPU_PROFILE = (3, 4)  # CPU는 t를 작게. 어차피 느리다.
+CPU_PROFILE = (4, 4)  # CPU는 t를 작게. 어차피 느리다.
+MAX_GROUP = 32
 
 
 def _nvidia_smi():
@@ -182,39 +192,41 @@ def autotune(make_engine, provider="", verbose=True, budget_s=1.2, use_cache=Tru
         _save_cache(key, g, r, msg)
         return g, r, msg
 
-    g, r = suggest(vram, provider)
+    g0, r = suggest(vram, provider)
     if verbose:
-        print(f"{head} -> 우선 시도 group={g} refs={r} (예상 {estimate_mb(g, r)} MB)")
+        print(f"{head} -> 참조 {r}개로 시작, group 최적점을 찾습니다")
 
-    # 추천값과 그보다 작은 후보들을 t 내림차순으로
-    cands = [(g, r)] + sorted(
-        [(gg, rr) for _, gg, rr in TABLE if gg + rr < g + r],
-        key=lambda x: -(x[0] + x[1]))
-
+    # 1) 시작점이 도는지 확인. 안 되면 표를 따라 내려간다.
     best = None
-    for gg, rr in cands:
-        per_frame, ok, err = probe(make_engine, gg, rr, budget_s=budget_s)
+    for gg, rr in [(g0, r)] + [(a, b) for _, a, b in TABLE if a + b < g0 + r]:
+        per, ok, err = probe(make_engine, gg, rr, budget_s=budget_s)
         if verbose:
-            val = f"{per_frame:.3f} s/frame" if per_frame != float("inf") else "실패"
-            print(f"  시험 group={gg} refs={rr}: {val}  {'OK' if ok else (err or '예산 초과')}")
-        if not ok:
-            continue
-        if best is None:
-            best = (gg, rr, per_frame)
-            continue
-        # 한 단계 낮췄더니 확연히 빠르면 갈아탄다
-        if per_frame * slack < best[2]:
-            best = (gg, rr, per_frame)
-        else:
-            break  # 더 낮춰도 이득이 없다
-
+            v = f"{per:.3f} s/frame" if per != float("inf") else "실패"
+            print(f"  group={gg:<3} refs={rr:<3} {v}  {'OK' if ok else (err or '예산 초과')}")
+        if ok:
+            best = (gg, rr, per)
+            break
     if best is None:
         g, r = TABLE[-1][1], TABLE[-1][2]
-        msg = f"{head}, 측정 실패 — 최소 설정 group={g} refs={r}"
-        return g, r, msg
+        return g, r, f"{head}, 측정 실패 — 최소 설정 group={g} refs={r}"
 
+    # 2) group_size 를 키우며 처리량이 좋아지는 동안 계속 올린다.
+    #    최적점은 GPU마다 다르고 VRAM 한계에서 절벽처럼 꺾이므로 표로 못 정한다.
+    #    참조 수는 건드리지 않으므로 품질은 그대로다.
     g, r, per = best
-    msg = f"{head}, group={g} refs={r} ({per:.2f}s/frame)"
+    step = 3
+    while g + step <= MAX_GROUP:
+        p2, ok2, _ = probe(make_engine, g + step, r, budget_s=budget_s)
+        gain = per / p2 if (ok2 and p2 > 0) else 0
+        if verbose:
+            v = f"{p2:.3f} s/frame" if p2 != float("inf") else "실패"
+            print(f"  group={g+step:<3} refs={r:<3} {v}" +
+                  (f"  {gain:.2f}x" if gain else "  (더 느림)"))
+        if gain < 1.03:          # 3% 미만이면 멈춘다
+            break
+        g, per = g + step, p2
+
+    msg = f"{head}, group={g} refs={r} ({per:.3f}s/frame, {1/per:.1f} fps)"
     _save_cache(key, g, r, msg)
     return g, r, msg
 

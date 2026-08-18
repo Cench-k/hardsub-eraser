@@ -134,21 +134,43 @@ class FFmpegWriter:
 
 
 def detect_pass(path, y0, y1, stride, detector, on_progress=None, quiet=False):
-    """자막 박스를 전체 프레임 좌표로 수집."""
+    """자막 박스를 전체 프레임 좌표로 수집.
+
+    stride > 1 이면 N프레임마다만 감지한다. 감지는 전체 시간의 20% 정도를
+    차지하므로 여기서 아끼는 게 크다.
+
+    건너뛴 프레임은 **앞뒤 샘플의 합집합**으로 채운다. 직전 값만 물려주면
+    자막이 새로 뜨는 순간을 최대 N-1 프레임 놓쳐서 글자가 남는다. 합집합이면
+    마스크가 조금 넓어질 뿐이라 안전하다.
+    """
     cap = cv2.VideoCapture(path)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    per_frame, last, i = [], [], 0
+    sampled, i = {}, 0
     with Progress("detect", total, "1/3 자막 감지", on_progress, quiet) as p:
         while True:
             ok, fr = cap.read()
             if not ok:
                 break
             if i % stride == 0:
-                last = [(x1, ya + y0, x2, yb + y0) for x1, ya, x2, yb in detector.boxes(fr[y0:y1])]
-            per_frame.append(last)
+                sampled[i] = [(x1, ya + y0, x2, yb + y0)
+                              for x1, ya, x2, yb in detector.boxes(fr[y0:y1])]
             i += 1
             p.update()
     cap.release()
+
+    n = i
+    if stride <= 1:
+        return [sampled.get(k, []) for k in range(n)]
+
+    keys = sorted(sampled)
+    per_frame = []
+    for k in range(n):
+        if k in sampled:
+            per_frame.append(sampled[k])
+            continue
+        prev = k - (k % stride)
+        nxt = prev + stride
+        per_frame.append(sampled.get(prev, []) + sampled.get(nxt, []))
     return per_frame
 
 

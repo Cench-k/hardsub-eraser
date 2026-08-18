@@ -82,8 +82,8 @@ if __name__ == "__main__":
     ap.add_argument("--n-refs", type=int, default=8)
     ap.add_argument("--ref-span", type=int, default=600)
     ap.add_argument("--group-size", type=int, default=5)
-    ap.add_argument("--backend", default="torch",
-                    help="스윕은 torch로 고정한다. n_refs마다 ONNX를 다시 내보내야 하므로.")
+    ap.add_argument("--det-stride", type=int, default=1)
+    ap.add_argument("--backend", default="torch")
     a = ap.parse_args()
 
     burned = "samples/_eval_burned.mp4"
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     print(f"처리 구역: y={region} (전체 높이 {int(h)})")
 
     run(burned, erased, region=region, n_refs=a.n_refs, ref_span=a.ref_span,
-        group_size=a.group_size, backend=a.backend)
+        group_size=a.group_size, backend=a.backend, det_stride=a.det_stride)
 
     psnr, s, nf = compare(a.src, burned, erased)
     print(f"\n=== 자막이 있던 영역만 원본과 비교 ({nf} 프레임) ===")

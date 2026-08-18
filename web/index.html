@@ -172,6 +172,14 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
       </label>
       <label>경계 부드럽게<input type="number" id="feather" value="4" min="0" max="12"></label>
       <label>출력 화질 CRF<input type="number" id="crf" value="18" min="12" max="30"></label>
+      <label>감지 간격
+        <select id="stride">
+          <option value="1">1 — 전 프레임 (가장 정확)</option>
+          <option value="3" selected>3 — 권장</option>
+          <option value="5">5 — 빠름</option>
+          <option value="10">10 — 가장 빠름</option>
+        </select>
+      </label>
       <span class="mono" id="crfhint" style="max-width:330px"></span>
       <button class="primary" id="go" style="margin-left:auto">처리 시작</button>
     </div>
@@ -196,6 +204,15 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
       <button id="play">재생 / 정지</button>
       <button class="primary" id="dl" style="margin-left:auto">다운로드</button>
     </div>
+  </section>
+
+  <section class="card" id="c-hist">
+    <h2>지난 작업</h2>
+    <div id="hist" class="mono">불러오는 중…</div>
+    <p class="hint">
+      결과물은 임시 폴더에 저장됩니다. Windows 디스크 정리로 지워질 수 있으니
+      <b>받으신 뒤 원하는 위치로 옮겨 두세요.</b>
+    </p>
   </section>
 </main>
 
@@ -476,7 +493,8 @@ $('#go').onclick = async () => {
     body: JSON.stringify({
       use_mask: true, mask_mode: $('#mode').value,
       n_refs, group_size,
-      feather: +$('#feather').value, crf: +$('#crf').value
+      feather: +$('#feather').value, crf: +$('#crf').value,
+      det_stride: +$('#stride').value
     })
   });
   if (!r.ok) { fail(await r.text()); return; }
@@ -509,7 +527,30 @@ function done() {
   $('#vBefore').src = `/api/jobs/${job.id}/source`;
   $('#vAfter').src = `/api/jobs/${job.id}/result`;
   $('#c-out').scrollIntoView({ behavior: 'smooth' });
+  loadHist();
 }
+
+// ---------------- 지난 작업 ----------------
+// 결과 화면은 새로고침하면 사라지고, 서버를 다시 켜면 작업 기억도 없어진다.
+// 완료된 결과물은 언제든 여기서 다시 받을 수 있어야 한다.
+async function loadHist() {
+  try {
+    const d = await (await fetch('/api/jobs', { cache: 'no-store' })).json();
+    const done = (d.jobs || []).filter(j => j.out);
+    if (!done.length) { $('#hist').textContent = '아직 완료된 작업이 없습니다.'; return; }
+    $('#hist').innerHTML = done.map(j => {
+      const mb = (j.out_size / 1048576).toFixed(1);
+      const t = j.mtime ? new Date(j.mtime * 1000).toLocaleString('ko-KR') : '';
+      const name = j.name.length > 46 ? j.name.slice(0, 44) + '…' : j.name;
+      return `<div class="row" style="padding:7px 0;border-top:1px solid var(--line)">
+        <span style="flex:1;min-width:200px" title="${j.name}">${name}</span>
+        <span>${mb} MB</span><span>${t}</span>
+        <a href="/api/jobs/${j.id}/result" download><button class="primary">받기</button></a>
+      </div>`;
+    }).join('');
+  } catch { $('#hist').textContent = '목록을 불러오지 못했습니다.'; }
+}
+loadHist();
 $('#play').onclick = () => {
   const a = $('#vBefore'), b = $('#vAfter');
   if (a.paused) { b.currentTime = a.currentTime; a.play(); b.play(); }
