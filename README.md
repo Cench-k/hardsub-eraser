@@ -1,7 +1,18 @@
 # hardsub_eraser · 하드섭 지우개
 
+[![release](https://img.shields.io/github/v/release/Cench-k/hardsub-eraser)](https://github.com/Cench-k/hardsub-eraser/releases/latest)
+[![license](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
+![platform](https://img.shields.io/badge/windows-x64-lightgrey)
+
 영상에 박힌 하드코딩 자막을 지우는 로컬 도구. 100% 오프라인, API 키 불필요.
 AniEraser(media.io) 같은 인페인팅 도구를 하드섭 제거에 특화해 만든 것.
+
+> **[포터블 판 내려받기](https://github.com/Cench-k/hardsub-eraser/releases/latest)** (264MB)
+> — 압축 풀고 `실행.bat`. Python도 ffmpeg도 설치할 필요 없습니다.
+> 경로가 너무 깊으면 Windows 260자 제한에 걸리니 바탕화면이나 `C:\` 근처에 푸세요.
+
+NVIDIA·AMD·Intel GPU 모두 지원하고, GPU가 없어도 CPU로 동작합니다.
+VRAM 크기에 맞춰 설정을 알아서 맞춥니다.
 
 **라이선스 GPLv3** ([LICENSE](LICENSE), 이유는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md))
 
