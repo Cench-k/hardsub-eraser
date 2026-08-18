@@ -120,6 +120,34 @@ def detect_pass(path, y0, y1, stride, detector, on_progress=None, quiet=False):
     return per_frame
 
 
+def load_user_mask(path, w, h):
+    """사용자가 그린 마스크를 영상 해상도의 0/1 배열로 만든다.
+
+    UI 캔버스가 영상보다 작을 수 있으므로 크기가 다르면 맞춰 늘린다.
+    """
+    m = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if m is None:
+        raise RuntimeError(f"마스크를 읽을 수 없습니다: {path}")
+    if m.ndim == 3:
+        m = m[:, :, 3] if m.shape[2] == 4 else cv2.cvtColor(m, cv2.COLOR_BGR2GRAY)
+    if m.shape[:2] != (h, w):
+        m = cv2.resize(m, (w, h), interpolation=cv2.INTER_NEAREST)
+    return (m > 127).astype(np.uint8)
+
+
+def band_from_mask(mask, w, h, pad=8):
+    """마스크를 감싸는 처리 밴드. choose_band와 같은 규칙(가로의 5/18 하한)."""
+    ys = np.where(mask.any(axis=1))[0]
+    if not len(ys):
+        return None
+    ymin, ymax = max(0, int(ys[0]) - pad), min(h, int(ys[-1]) + 1 + pad)
+    band_h = min(h, max(ymax - ymin, int(w * 5 / 18)))
+    center = (ymin + ymax) // 2
+    by0 = max(0, center - band_h // 2)
+    by1 = min(h, by0 + band_h)
+    return max(0, by1 - band_h), by1, ymin, ymax
+
+
 def choose_band(per_frame, w, h, pad=8):
     """감지 결과를 감싸는 처리 밴드. STTN 입력이 432x240 고정이라 지나치게 얇게
     자르면 세로로 심하게 늘어나므로, 가로의 5/18을 하한으로 둔다."""
@@ -204,46 +232,98 @@ def make_engine(backend, model, onnx_dir, device, group_size, n_refs, ref_span,
 def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=None,
         n_refs=None, ref_span=600, feather=4, model=None, crf=18,
         mask_pad=3, det_side_len=960, cache_size=64, work_dir=None,
-        backend="auto", onnx_dir=None, on_progress=None, quiet=False):
+        backend="auto", onnx_dir=None, on_progress=None, quiet=False,
+        mask_path=None, mask_mode="detect"):
+    """mask_path: 사용자가 그린 마스크(PNG). 주면 region 대신 이걸 쓴다.
+
+    mask_mode
+      'detect' — 그린 영역 '안에서' 자막을 프레임마다 찾아 지운다.
+                 자막이 없는 프레임이 참조로 살아나므로 품질이 가장 좋다.
+      'static' — 그린 영역 전체를 모든 프레임에서 지운다.
+                 로고·고정 워터마크처럼 늘 같은 자리에 있는 것에 쓴다.
+    """
     model = model or DEFAULT_TORCH_MODEL
     onnx_dir = onnx_dir or DEFAULT_ONNX_DIR
     log = (lambda *a: None) if quiet else print
 
     info = probe(inp)
     w, h, fps = info["w"], info["h"], info["fps"]
-    y0, y1 = parse_region(region, h)
-    log(f"입력: {w}x{h} @ {fps:.3f}fps, {info['n']} frames | 감지 구역 y={y0}~{y1}")
+    n_total = info["n"]
 
-    t0 = time.time()
-    per_frame = detect_pass(inp, y0, y1, det_stride,
-                            TextDetector(limit_side_len=det_side_len),
-                            on_progress=on_progress, quiet=quiet)
-    n = len(per_frame)
-    log(f"감지 완료: {sum(1 for b in per_frame if b)}/{n} 프레임 ({time.time()-t0:.1f}s)")
+    user = load_user_mask(mask_path, w, h) if mask_path else None
+    if user is not None and not user.any():
+        raise RuntimeError("마스크가 비어 있습니다. 지울 영역을 칠해 주세요.")
 
-    band = choose_band(per_frame, w, h)
-    if band is None:
-        raise RuntimeError("지정한 구역에서 텍스트를 찾지 못했습니다. 구역을 조정해 보세요.")
-    by0, by1, ymin, ymax = band
-    band_h = by1 - by0
-    log(f"자막 범위 y={ymin}~{ymax} -> 처리 밴드 y={by0}~{by1} "
-        f"({w}x{band_h} -> {MODEL_W}x{MODEL_H})")
+    # ---- 처리 밴드와 프레임별 마스크 결정 ----
+    if user is not None and mask_mode == "static":
+        # 그린 영역을 모든 프레임에서 지운다. 감지 패스가 필요 없다.
+        band = band_from_mask(user, w, h)
+        by0, by1, ymin, ymax = band
+        band_h = by1 - by0
+        log(f"입력: {w}x{h} @ {fps:.3f}fps, {n_total} frames | 사용자 마스크 (전체 프레임 적용)")
+        log(f"마스크 범위 y={ymin}~{ymax} -> 처리 밴드 y={by0}~{by1} "
+            f"({w}x{band_h} -> {MODEL_W}x{MODEL_H})")
 
-    # 마스크는 박스에서 즉석 생성한다(사각형 몇 개 채우는 비용). 저장하지 않는다.
-    sx, sy = MODEL_W / w, MODEL_H / band_h
+        band_mask = user[by0:by1]
+        small_band = cv2.resize(band_mask, (MODEL_W, MODEL_H),
+                                interpolation=cv2.INTER_NEAREST)
+        n = n_total
 
-    def boxes_of(i):
-        return [(x1, ya - by0, x2, yb - by0) for x1, ya, x2, yb in per_frame[i]]
+        def full_mask(i):
+            return band_mask
 
-    def full_mask(i):
-        return boxes_to_mask(boxes_of(i), band_h, w, pad=mask_pad)
+        def small_mask(i):
+            return small_band
 
-    def small_mask(i):
-        b = [(int(x1 * sx), int(ya * sy), int(np.ceil(x2 * sx)), int(np.ceil(yb * sy)))
-             for x1, ya, x2, yb in boxes_of(i)]
-        return boxes_to_mask(b, MODEL_H, MODEL_W, pad=1)
+        # 모든 프레임이 같으므로 참조 선택은 시간축으로 고르게만 퍼지면 된다
+        mask_area = np.full(n, int(small_band.sum()), dtype=np.int64)
+    else:
+        if user is not None:
+            # 그린 영역을 탐색 범위로 삼는다
+            ys = np.where(user.any(axis=1))[0]
+            y0, y1 = max(0, int(ys[0]) - 4), min(h, int(ys[-1]) + 5)
+            log(f"입력: {w}x{h} @ {fps:.3f}fps, {n_total} frames | "
+                f"사용자 마스크 안에서 감지 y={y0}~{y1}")
+        else:
+            y0, y1 = parse_region(region, h)
+            log(f"입력: {w}x{h} @ {fps:.3f}fps, {n_total} frames | 감지 구역 y={y0}~{y1}")
 
-    mask_area = np.array([small_mask(i).sum() for i in range(n)], dtype=np.int64)
+        t0 = time.time()
+        per_frame = detect_pass(inp, y0, y1, det_stride,
+                                TextDetector(limit_side_len=det_side_len),
+                                on_progress=on_progress, quiet=quiet)
+        if user is not None:
+            # 그린 영역 밖으로 삐져나온 감지는 버린다
+            per_frame = [[b for b in boxes
+                          if user[max(0, b[1]):b[3], max(0, b[0]):b[2]].any()]
+                         for boxes in per_frame]
+        n = len(per_frame)
+        log(f"감지 완료: {sum(1 for b in per_frame if b)}/{n} 프레임 ({time.time()-t0:.1f}s)")
+
+        band = choose_band(per_frame, w, h)
+        if band is None:
+            raise RuntimeError("지정한 영역에서 텍스트를 찾지 못했습니다. "
+                               "영역을 조정하거나 '영역 전체 지우기'로 바꿔 보세요.")
+        by0, by1, ymin, ymax = band
+        band_h = by1 - by0
+        log(f"자막 범위 y={ymin}~{ymax} -> 처리 밴드 y={by0}~{by1} "
+            f"({w}x{band_h} -> {MODEL_W}x{MODEL_H})")
+
+        # 마스크는 박스에서 즉석 생성한다(사각형 몇 개 채우는 비용). 저장하지 않는다.
+        sx, sy = MODEL_W / w, MODEL_H / band_h
+
+        def boxes_of(i):
+            return [(x1, ya - by0, x2, yb - by0) for x1, ya, x2, yb in per_frame[i]]
+
+        def full_mask(i):
+            return boxes_to_mask(boxes_of(i), band_h, w, pad=mask_pad)
+
+        def small_mask(i):
+            b = [(int(x1 * sx), int(ya * sy), int(np.ceil(x2 * sx)), int(np.ceil(yb * sy)))
+                 for x1, ya, x2, yb in boxes_of(i)]
+            return boxes_to_mask(b, MODEL_H, MODEL_W, pad=1)
+
+        mask_area = np.array([small_mask(i).sum() for i in range(n)], dtype=np.int64)
     tmp = work_dir or tempfile.mkdtemp(prefix="hse_")
     os.makedirs(tmp, exist_ok=True)
 

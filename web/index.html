@@ -7,15 +7,15 @@
 <style>
 :root{
   --bg:#f6f7f9; --panel:#fff; --line:#e3e6ea; --fg:#14171a; --muted:#697280;
-  --accent:#2f6df6; --accent-fg:#fff; --band:rgba(47,109,246,.22); --ok:#1a7f45; --err:#c0392b;
+  --accent:#2f6df6; --accent-fg:#fff; --ok:#1a7f45; --err:#c0392b; --paint:#ff3b30;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
   --bg:#14171b; --panel:#1c2027; --line:#2c323b; --fg:#e8eaed; --muted:#98a1ad;
-  --accent:#5b8dff; --accent-fg:#0b0d10; --band:rgba(91,141,255,.26); --ok:#4ade80; --err:#f87171;
+  --accent:#5b8dff; --accent-fg:#0b0d10; --ok:#4ade80; --err:#f87171; --paint:#ff5b52;
 }}
 :root[data-theme=dark]{
   --bg:#14171b; --panel:#1c2027; --line:#2c323b; --fg:#e8eaed; --muted:#98a1ad;
-  --accent:#5b8dff; --accent-fg:#0b0d10; --band:rgba(91,141,255,.26); --ok:#4ade80; --err:#f87171;
+  --accent:#5b8dff; --accent-fg:#0b0d10; --ok:#4ade80; --err:#f87171; --paint:#ff5b52;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
@@ -24,50 +24,73 @@ header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;
   align-items:baseline;gap:14px;flex-wrap:wrap}
 h1{font-size:18px;margin:0;font-weight:650;letter-spacing:-.01em}
 .sub{color:var(--muted);font-size:13px}
-main{max-width:1100px;margin:0 auto;padding:24px;display:grid;gap:18px}
+main{max-width:1080px;margin:0 auto;padding:24px;display:grid;gap:18px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
 .card h2{font-size:14px;margin:0 0 12px;font-weight:650;color:var(--muted);
   text-transform:uppercase;letter-spacing:.04em}
-button{font:inherit;padding:9px 16px;border-radius:8px;border:1px solid var(--line);
+button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);
   background:var(--panel);color:var(--fg);cursor:pointer}
 button:hover:not(:disabled){border-color:var(--accent)}
 button:disabled{opacity:.45;cursor:not-allowed}
 button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+button.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 #drop{border:2px dashed var(--line);border-radius:12px;padding:44px;text-align:center;
   color:var(--muted);cursor:pointer}
-#drop.over{border-color:var(--accent);background:var(--band)}
-#stage{position:relative;display:inline-block;max-width:100%;line-height:0}
-#shot{max-width:100%;border-radius:8px;display:block}
-#band{position:absolute;left:0;right:0;background:var(--band);
-  border-top:2px solid var(--accent);border-bottom:2px solid var(--accent);cursor:move}
-.handle{position:absolute;left:0;right:0;height:14px;cursor:ns-resize}
-.handle.t{top:-7px} .handle.b{bottom:-7px}
-#boxes{position:absolute;inset:0;pointer-events:none}
-#boxes i{position:absolute;border:1.5px solid var(--ok);border-radius:2px;display:block}
-#boxes i.mark{border-color:var(--muted);border-style:dashed}
+#drop.over{border-color:var(--accent);background:rgba(47,109,246,.12)}
+
+#stage{position:relative;display:inline-block;max-width:100%;line-height:0;
+  touch-action:none;user-select:none}
+/* 세로 영상은 원본 비율대로 두면 표시 높이가 1600px를 넘어 화면을 벗어난다.
+   높이를 화면 기준으로 제한하고 폭은 비율에 맞춰 따라오게 한다.
+   캔버스는 inset:0 이라 이미지 크기를 그대로 따라간다. */
+#shot{display:block;border-radius:8px;
+  max-width:100%;max-height:var(--ph,52vh);width:auto;height:auto}
+#mask{position:absolute;inset:0;width:100%;height:100%;opacity:.45;
+  border-radius:8px;cursor:crosshair}
+#cursor{position:absolute;border:1.5px solid #fff;border-radius:50%;pointer-events:none;
+  box-shadow:0 0 0 1.5px rgba(0,0,0,.6);display:none;transform:translate(-50%,-50%)}
+
 label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+label.inline{flex-direction:row;align-items:center;gap:7px}
 input[type=number],select{font:inherit;padding:7px 9px;border-radius:7px;
-  border:1px solid var(--line);background:var(--bg);color:var(--fg);width:110px}
+  border:1px solid var(--line);background:var(--bg);color:var(--fg);width:112px}
 input[type=range]{width:100%}
 .bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--accent);width:0;transition:width .25s}
 .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--muted)}
 .hide{display:none!important}
 .err{color:var(--err)} .ok{color:var(--ok)}
+.sep{width:1px;height:24px;background:var(--line)}
+.hint{font-size:12.5px;color:var(--muted);margin:10px 0 0}
+kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
+  border-bottom-width:2px;border-radius:5px;background:var(--bg)}
 #cmp{position:relative;max-width:100%;overflow:hidden;border-radius:8px;line-height:0}
 #cmp video{display:block;max-width:100%}
 #cmp .after{position:absolute;inset:0;overflow:hidden;width:50%}
 #cmp .after video{max-width:none}
 #split{position:absolute;top:0;bottom:0;width:3px;background:var(--accent);cursor:ew-resize}
-.tag{font-size:11px;padding:2px 7px;border-radius:99px;background:var(--band);color:var(--fg)}
+.tag{font-size:11px;padding:2px 7px;border-radius:99px;background:var(--line);color:var(--fg)}
+
+/* 상태 표시등 — 터미널이 안 보이므로 서버가 살아있는지 여기서 알린다 */
+#health{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12.5px;
+  padding:5px 12px;border-radius:99px;border:1px solid var(--line);background:var(--bg)}
+#dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+#health.up   #dot{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+#health.busy #dot{background:#e8a33d;animation:pulse 1.1s ease-in-out infinite}
+#health.down #dot{background:var(--err)}
+#health.down{border-color:var(--err);color:var(--err)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+#hinfo{color:var(--muted)}
+#health.down #hinfo{color:var(--err)}
 </style>
 </head>
 <body>
 <header>
   <h1>하드섭 지우개</h1>
-  <span class="sub">영상에 박힌 자막을 지웁니다 · 100% 로컬 처리</span>
-  <span class="sub mono" id="backend" style="margin-left:auto"></span>
+  <span class="sub">지울 곳을 칠하면 지웁니다 · 100% 로컬 처리</span>
+  <div id="health" title="서버 상태"><span id="dot"></span><span id="hlabel">확인 중…</span>
+    <span id="hinfo"></span></div>
 </header>
 
 <main>
@@ -80,31 +103,64 @@ input[type=range]{width:100%}
     <div class="mono" id="meta" style="margin-top:10px"></div>
   </section>
 
-  <section class="card hide" id="c-region">
-    <h2>2 · 자막 구역 지정</h2>
+  <section class="card hide" id="c-edit">
+    <h2>2 · 지울 영역 칠하기</h2>
+
     <div class="row" style="margin-bottom:12px">
+      <button id="t-brush" class="on">브러시</button>
+      <button id="t-rect">사각형</button>
+      <button id="t-erase">지우개</button>
+      <div class="sep"></div>
+      <label class="inline">크기
+        <input type="range" id="size" min="4" max="200" value="40" style="width:130px">
+        <span class="mono" id="sizeval">40</span>
+      </label>
+      <div class="sep"></div>
+      <button id="undo">실행취소</button>
+      <button id="clear">전체 지우기</button>
+      <div class="sep"></div>
       <button id="scan">자막 자동 탐색</button>
-      <span class="mono" id="scaninfo"></span>
+      <div class="sep"></div>
+      <label class="inline">미리보기
+        <button class="zoom" data-h="34vh">작게</button>
+        <button class="zoom on" data-h="52vh">보통</button>
+        <button class="zoom" data-h="78vh">크게</button>
+      </label>
     </div>
+
     <div id="stage">
       <img id="shot" alt="">
-      <div id="boxes"></div>
-      <div id="band"><div class="handle t"></div><div class="handle b"></div></div>
+      <canvas id="mask"></canvas>
+      <div id="cursor"></div>
     </div>
+
     <div style="margin-top:12px">
       <input type="range" id="seek" min="0" value="0" step="1">
       <div class="row" style="justify-content:space-between">
-        <span class="mono" id="pos">0</span>
-        <span class="mono" id="regionTxt"></span>
+        <span class="mono" id="pos"></span>
+        <span class="mono" id="painted"></span>
       </div>
     </div>
-    <p class="sub" style="margin:10px 0 0">
-      파란 띠 안에서만 자막을 찾아 지웁니다. 띠를 끌어 옮기거나 위/아래 가장자리로 크기를 조절하세요.
+
+    <p class="hint">
+      <kbd>Shift</kbd> 를 누른 채 브러시를 끌면 <b>수평·수직 직선</b>으로 그려집니다.
+      사각형은 <kbd>Shift</kbd> 로 정사각형이 됩니다.
+      <kbd>B</kbd> 브러시 · <kbd>R</kbd> 사각형 · <kbd>E</kbd> 지우개 ·
+      <kbd>Ctrl</kbd>+<kbd>Z</kbd> 실행취소 · <kbd>[</kbd> <kbd>]</kbd> 크기
     </p>
   </section>
 
   <section class="card hide" id="c-run">
     <h2>3 · 설정 및 실행</h2>
+    <div class="row" style="gap:16px;margin-bottom:14px">
+      <label>칠한 영역 처리
+        <select id="mode">
+          <option value="detect" selected>영역 안에서 자막만 찾아 지우기</option>
+          <option value="static">칠한 영역 전부 지우기</option>
+        </select>
+      </label>
+      <span class="mono" id="modehint" style="max-width:460px"></span>
+    </div>
     <div class="row" style="gap:16px">
       <label>품질
         <select id="preset">
@@ -116,7 +172,6 @@ input[type=range]{width:100%}
       </label>
       <label>경계 부드럽게<input type="number" id="feather" value="4" min="0" max="12"></label>
       <label>출력 화질 CRF<input type="number" id="crf" value="18" min="12" max="30"></label>
-      <label>감지 간격<input type="number" id="stride" value="1" min="1" max="10"></label>
       <button class="primary" id="go" style="margin-left:auto">처리 시작</button>
     </div>
     <div id="prog" class="hide" style="margin-top:16px">
@@ -145,16 +200,61 @@ input[type=range]{width:100%}
 
 <script>
 const $ = s => document.querySelector(s);
-const API = '';
-let job = null, H = 0, W = 0, N = 0, shotW = 0, shotH = 0;
-let region = [0.70, 1.0];
+let job = null, W = 0, H = 0, N = 0;
+let tool = 'brush', size = 40, drawing = false;
+let sx = 0, sy = 0, lx = 0, ly = 0, snapAxis = null, rectStart = null;
+const cv = $('#mask'), ctx = cv.getContext('2d', { willReadFrequently: true });
+const undoStack = [];
 
-// ---------- 백엔드 표시 ----------
-fetch(API + '/api/backends').then(r => r.json()).then(d => {
-  $('#backend').textContent = d.active ? '실행: ' + d.active : '실행: CPU';
-}).catch(() => {});
+// ---------------- 서버 상태 표시등 ----------------
+// 콘솔 창이 안 보여도 서버가 살아있는지, 지금 뭘 하는지 여기서 알 수 있게 한다.
+const health = $('#health');
+let downSince = null;
 
-// ---------- 파일 열기 ----------
+function fmtUptime(s) {
+  if (s < 60) return `${s}초`;
+  if (s < 3600) return `${Math.floor(s / 60)}분`;
+  return `${Math.floor(s / 3600)}시간 ${Math.floor(s % 3600 / 60)}분`;
+}
+
+async function ping() {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 4000);
+    const r = await fetch('/api/health', { signal: c.signal, cache: 'no-store' });
+    clearTimeout(t);
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    downSince = null;
+
+    const bits = [];
+    if (d.backend) bits.push(d.backend);
+    if (d.vram_mb) bits.push(`VRAM ${(d.vram_mb / 1024).toFixed(1)}GB`);
+    bits.push(`가동 ${fmtUptime(d.uptime_s)}`);
+
+    if (d.busy) {
+      health.className = 'busy';
+      const STAGE = { detect: '자막 감지', cache: '밴드 캐시', paint: '인페인팅' };
+      $('#hlabel').textContent =
+        `처리 중 · ${STAGE[d.stage] || d.stage} ${(d.progress * 100).toFixed(0)}%`;
+    } else {
+      health.className = 'up';
+      $('#hlabel').textContent = '실행 중';
+    }
+    $('#hinfo').textContent = bits.join(' · ');
+  } catch {
+    if (!downSince) downSince = Date.now();
+    health.className = 'down';
+    $('#hlabel').textContent = '서버 응답 없음';
+    $('#hinfo').textContent = '바탕화면 바로가기로 다시 실행하세요';
+  }
+}
+ping();
+setInterval(ping, 3000);
+// 탭으로 돌아오면 즉시 갱신
+document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });
+
+// ---------------- 파일 열기 ----------------
 const drop = $('#drop');
 drop.onclick = () => $('#file').click();
 drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
@@ -166,116 +266,215 @@ $('#file').onchange = e => e.target.files[0] && upload(e.target.files[0]);
 async function upload(f) {
   drop.textContent = '업로드 중… ' + f.name;
   const fd = new FormData(); fd.append('file', f);
-  const r = await fetch(API + '/api/jobs', { method: 'POST', body: fd });
+  const r = await fetch('/api/jobs', { method: 'POST', body: fd });
   if (!r.ok) { drop.textContent = '열기 실패: ' + (await r.text()); return; }
   job = await r.json();
   W = job.info.w; H = job.info.h; N = job.info.n;
-  $('#meta').textContent = `${W}×${H} · ${job.info.fps.toFixed(2)}fps · ${N} 프레임 · ${(N / job.info.fps).toFixed(1)}초`;
+  $('#meta').textContent =
+    `${W}×${H} · ${job.info.fps.toFixed(2)}fps · ${N} 프레임 · ${(N/job.info.fps).toFixed(1)}초`;
   drop.textContent = f.name;
   $('#seek').max = Math.max(0, N - 1);
-  $('#c-region').classList.remove('hide');
+
+  // 캔버스는 영상 해상도 그대로. 화면에는 CSS로 줄여 보여준다.
+  cv.width = W; cv.height = H;
+  ctx.clearRect(0, 0, W, H);
+  undoStack.length = 0;
+  updatePainted();
+
+  $('#c-edit').classList.remove('hide');
   $('#c-run').classList.remove('hide');
   showFrame(0);
 }
 
-// ---------- 프레임 미리보기 ----------
 function showFrame(n) {
-  $('#pos').textContent = `프레임 ${n}`;
-  $('#shot').src = `${API}/api/jobs/${job.id}/frame?n=${n}&w=860`;
+  $('#pos').textContent = `프레임 ${n} / ${N - 1}`;
+  $('#shot').src = `/api/jobs/${job.id}/frame?n=${n}&w=900`;
 }
-$('#shot').onload = () => {
-  shotW = $('#shot').clientWidth; shotH = $('#shot').clientHeight;
-  drawBand();
-};
 $('#seek').oninput = e => showFrame(+e.target.value);
 
-// ---------- 구역 밴드 ----------
-function drawBand() {
-  const b = $('#band');
-  b.style.top = (region[0] * shotH) + 'px';
-  b.style.height = ((region[1] - region[0]) * shotH) + 'px';
-  $('#regionTxt').textContent =
-    `구역 y ${Math.round(region[0] * H)} ~ ${Math.round(region[1] * H)} (${(region[0] * 100).toFixed(0)}% ~ ${(region[1] * 100).toFixed(0)}%)`;
+// ---------------- 도구 ----------------
+function setTool(t) {
+  tool = t;
+  for (const [k, el] of Object.entries({ brush: '#t-brush', rect: '#t-rect', erase: '#t-erase' }))
+    $(el).classList.toggle('on', k === t);
 }
-(function bandDrag() {
-  const band = $('#band'); let mode = null, sy = 0, s0 = 0, s1 = 0;
-  const start = m => e => {
-    mode = m; sy = e.clientY; s0 = region[0]; s1 = region[1];
-    e.preventDefault(); e.stopPropagation();
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  };
-  const move = e => {
-    if (!mode || !shotH) return;
-    const d = (e.clientY - sy) / shotH;
-    if (mode === 'move') {
-      const w = s1 - s0;
-      let a = Math.min(Math.max(0, s0 + d), 1 - w);
-      region = [a, a + w];
-    } else if (mode === 't') region = [Math.min(Math.max(0, s0 + d), s1 - .02), s1];
-    else region = [s0, Math.max(Math.min(1, s1 + d), s0 + .02)];
-    drawBand();
-  };
-  const up = () => { mode = null;
-    document.removeEventListener('mousemove', move);
-    document.removeEventListener('mouseup', up); };
-  band.addEventListener('mousedown', start('move'));
-  band.querySelector('.t').addEventListener('mousedown', start('t'));
-  band.querySelector('.b').addEventListener('mousedown', start('b'));
-})();
+$('#t-brush').onclick = () => setTool('brush');
+$('#t-rect').onclick  = () => setTool('rect');
+$('#t-erase').onclick = () => setTool('erase');
+$('#size').oninput = e => { size = +e.target.value; $('#sizeval').textContent = size; };
 
-// ---------- 자막 자동 탐색 ----------
+// 미리보기 크기. 세로 영상이 화면을 꽉 채우는 걸 막고, 세밀하게 칠할 땐 크게 볼 수 있게.
+document.querySelectorAll('.zoom').forEach(b => b.onclick = () => {
+  document.documentElement.style.setProperty('--ph', b.dataset.h);
+  document.querySelectorAll('.zoom').forEach(x => x.classList.toggle('on', x === b));
+});
+
+// 캔버스 좌표(영상 해상도)로 변환
+function pt(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * (W / r.width), y: (e.clientY - r.top) * (H / r.height) };
+}
+function scale() { return W / cv.getBoundingClientRect().width; }
+
+function pushUndo() {
+  undoStack.push(ctx.getImageData(0, 0, W, H));
+  if (undoStack.length > 20) undoStack.shift();
+}
+$('#undo').onclick = () => {
+  if (!undoStack.length) return;
+  ctx.putImageData(undoStack.pop(), 0, 0);
+  updatePainted();
+};
+$('#clear').onclick = () => { pushUndo(); ctx.clearRect(0, 0, W, H); updatePainted(); };
+
+function paintStyle() {
+  ctx.globalCompositeOperation = (tool === 'erase') ? 'destination-out' : 'source-over';
+  ctx.fillStyle = ctx.strokeStyle = '#ff0000';
+  ctx.lineCap = ctx.lineJoin = 'round';
+  ctx.lineWidth = size;
+}
+function dot(x, y) { paintStyle(); ctx.beginPath(); ctx.arc(x, y, size / 2, 0, 7); ctx.fill(); }
+function seg(x0, y0, x1, y1) {
+  paintStyle();
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+}
+
+cv.addEventListener('pointerdown', e => {
+  if (!job) return;
+  cv.setPointerCapture(e.pointerId);
+  const p = pt(e);
+  pushUndo();
+  drawing = true; sx = lx = p.x; sy = ly = p.y; snapAxis = null;
+  if (tool === 'rect') { rectStart = ctx.getImageData(0, 0, W, H); }
+  else dot(p.x, p.y);
+});
+
+cv.addEventListener('pointermove', e => {
+  const p = pt(e);
+  const c = $('#cursor'), r = cv.getBoundingClientRect();
+  if (tool !== 'rect') {
+    c.style.display = 'block';
+    c.style.width = c.style.height = (size / scale()) + 'px';
+    c.style.left = (e.clientX - r.left) + 'px';
+    c.style.top  = (e.clientY - r.top) + 'px';
+  } else c.style.display = 'none';
+
+  if (!drawing) return;
+
+  if (tool === 'rect') {
+    ctx.putImageData(rectStart, 0, 0);
+    let w = p.x - sx, h = p.y - sy;
+    if (e.shiftKey) { const s = Math.min(Math.abs(w), Math.abs(h));
+      w = Math.sign(w) * s; h = Math.sign(h) * s; }
+    paintStyle();
+    ctx.fillRect(Math.min(sx, sx + w), Math.min(sy, sy + h), Math.abs(w), Math.abs(h));
+    return;
+  }
+
+  // 브러시/지우개 — Shift 를 누르면 시작점 기준 수평·수직으로 고정한다
+  let x = p.x, y = p.y;
+  if (e.shiftKey) {
+    if (!snapAxis) snapAxis = Math.abs(p.x - sx) >= Math.abs(p.y - sy) ? 'x' : 'y';
+    if (snapAxis === 'x') y = sy; else x = sx;
+  } else snapAxis = null;
+
+  seg(lx, ly, x, y);
+  lx = x; ly = y;
+});
+
+function endDraw() {
+  if (!drawing) return;
+  drawing = false; rectStart = null; snapAxis = null;
+  updatePainted();
+}
+cv.addEventListener('pointerup', endDraw);
+cv.addEventListener('pointercancel', endDraw);
+cv.addEventListener('pointerleave', () => { $('#cursor').style.display = 'none'; });
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.ctrlKey && e.key.toLowerCase() === 'z') { e.preventDefault(); $('#undo').click(); return; }
+  const k = e.key.toLowerCase();
+  if (k === 'b') setTool('brush');
+  else if (k === 'r') setTool('rect');
+  else if (k === 'e') setTool('erase');
+  else if (e.key === '[' || e.key === ']') {
+    size = Math.max(4, Math.min(200, size + (e.key === ']' ? 8 : -8)));
+    $('#size').value = size; $('#sizeval').textContent = size;
+  }
+});
+
+// 칠한 픽셀 수 (알파 채널 기준)
+function updatePainted() {
+  const d = ctx.getImageData(0, 0, W, H).data;
+  let n = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 127) n++;
+  const pct = (n / (W * H) * 100);
+  $('#painted').textContent = n ? `칠한 영역 ${pct.toFixed(2)}%` : '아직 칠하지 않았습니다';
+  $('#go').disabled = !n;
+}
+
+// ---------------- 자막 자동 탐색 → 마스크에 칠하기 ----------------
 $('#scan').onclick = async () => {
-  $('#scan').disabled = true; $('#scaninfo').textContent = '탐색 중…';
+  const b = $('#scan'); b.disabled = true; const old = b.textContent; b.textContent = '탐색 중…';
   try {
-    const d = await (await fetch(`${API}/api/jobs/${job.id}/scan`)).json();
-    const bx = $('#boxes'); bx.innerHTML = '';
-    const scale = shotW / d.width;
-    const add = (o, cls) => {
-      const [x1, y1, x2, y2] = o.box, i = document.createElement('i');
-      if (cls) i.className = cls;
-      i.style.cssText = `left:${x1 * scale}px;top:${y1 * scale}px;width:${(x2 - x1) * scale}px;height:${(y2 - y1) * scale}px`;
-      bx.appendChild(i);
-    };
-    (d.watermarks || []).slice(0, 30).forEach(o => add(o, 'mark'));
-    (d.boxes || []).slice(0, 60).forEach(o => add(o, ''));
-
-    if (d.suggested_region) {
-      region = d.suggested_region; drawBand();
-      let msg = `<span class="ok">자막 구간을 찾아 구역을 맞췄습니다</span>`;
-      if (d.static_count) msg += ` · 고정 워터마크 ${d.static_count}개는 제외했습니다 (점선)`;
-      $('#scaninfo').innerHTML = msg;
+    const d = await (await fetch(`/api/jobs/${job.id}/scan`)).json();
+    if (!d.boxes || !d.boxes.length) {
+      alert(d.static_count ? '고정 워터마크만 찾았습니다. 직접 칠해 주세요.'
+                           : '자막을 찾지 못했습니다. 직접 칠해 주세요.');
     } else {
-      $('#scaninfo').textContent = d.static_count
-        ? '고정 워터마크만 찾았습니다. 지우려면 구역을 직접 지정하세요.'
-        : '텍스트를 찾지 못했습니다. 구역을 직접 지정하세요.';
+      pushUndo();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#ff0000';
+      const pad = Math.round(Math.max(W, H) * 0.004);
+      for (const o of d.boxes) {
+        const [x1, y1, x2, y2] = o.box;
+        ctx.fillRect(x1 - pad, y1 - pad, (x2 - x1) + pad * 2, (y2 - y1) + pad * 2);
+      }
+      updatePainted();
     }
-  } catch (e) { $('#scaninfo').textContent = '탐색 실패: ' + e; }
-  $('#scan').disabled = false;
+  } catch (err) { alert('탐색 실패: ' + err); }
+  b.disabled = false; b.textContent = old;
 };
 
-// ---------- 실행 ----------
-// auto는 서버가 VRAM을 재고 실제로 돌려 보며 정한다 (hse/autotune.py)
+// ---------------- 실행 ----------------
+const HINT = {
+  detect: '칠한 영역 안에서 프레임마다 자막을 찾아 그 글자만 지웁니다. 자막이 없는 프레임이 배경 참조로 쓰여 품질이 가장 좋습니다.',
+  static: '칠한 영역을 모든 프레임에서 통째로 지웁니다. 로고처럼 늘 같은 자리에 있는 것에 쓰세요. 참조할 깨끗한 프레임이 없어 배경이 정지해 있으면 얼룩이 남을 수 있습니다.'
+};
+$('#mode').onchange = e => { $('#modehint').textContent = HINT[e.target.value]; };
+$('#modehint').textContent = HINT.detect;
+
 const PRESET = { auto: [null, null], fast: [5, 4], balanced: [8, 5], best: [14, 5] };
 $('#go').onclick = async () => {
-  const [n_refs, group_size] = PRESET[$('#preset').value];
-  $('#go').disabled = true; $('#prog').classList.remove('hide');
+  $('#go').disabled = true;
+  $('#prog').classList.remove('hide');
   $('#errbox').classList.add('hide');
-  const body = {
-    region: `${region[0].toFixed(4)},${region[1].toFixed(4)}`,
-    n_refs, group_size,
-    feather: +$('#feather').value, crf: +$('#crf').value,
-    det_stride: +$('#stride').value
-  };
-  const r = await fetch(`${API}/api/jobs/${job.id}/run`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  $('#pstage').textContent = '마스크 전송 중…';
+
+  const png = cv.toDataURL('image/png');
+  const mr = await fetch(`/api/jobs/${job.id}/mask`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ png })
+  });
+  if (!mr.ok) { fail('마스크 전송 실패: ' + (await mr.text())); return; }
+
+  const [n_refs, group_size] = PRESET[$('#preset').value];
+  const r = await fetch(`/api/jobs/${job.id}/run`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      use_mask: true, mask_mode: $('#mode').value,
+      n_refs, group_size,
+      feather: +$('#feather').value, crf: +$('#crf').value
+    })
+  });
   if (!r.ok) { fail(await r.text()); return; }
   listen();
 };
 
 const STAGE = { detect: '자막 감지', cache: '밴드 캐시', paint: '인페인팅' };
 function listen() {
-  const es = new EventSource(`${API}/api/jobs/${job.id}/stream`);
+  const es = new EventSource(`/api/jobs/${job.id}/stream`);
   es.onmessage = e => {
     const j = JSON.parse(e.data);
     $('#pbar').style.width = (j.progress * 100).toFixed(1) + '%';
@@ -290,13 +489,14 @@ function fail(msg) {
   $('#go').disabled = false;
   $('#errbox').classList.remove('hide');
   $('#errbox').textContent = msg;
+  $('#pstage').textContent = '';
 }
 function done() {
   $('#go').disabled = false;
   $('#pstage').innerHTML = '<span class="ok">완료</span>';
   $('#c-out').classList.remove('hide');
-  $('#vBefore').src = `${API}/api/jobs/${job.id}/source`;
-  $('#vAfter').src = `${API}/api/jobs/${job.id}/result`;
+  $('#vBefore').src = `/api/jobs/${job.id}/source`;
+  $('#vAfter').src = `/api/jobs/${job.id}/result`;
   $('#c-out').scrollIntoView({ behavior: 'smooth' });
 }
 $('#play').onclick = () => {
@@ -304,12 +504,12 @@ $('#play').onclick = () => {
   if (a.paused) { b.currentTime = a.currentTime; a.play(); b.play(); }
   else { a.pause(); b.pause(); }
 };
-// 두 영상이 어긋나면 비교가 무의미하므로 주기적으로 맞춘다
 setInterval(() => {
   const a = $('#vBefore'), b = $('#vAfter');
-  if (!a.paused && Math.abs(a.currentTime - b.currentTime) > 0.08) b.currentTime = a.currentTime;
+  if (a && b && !a.paused && Math.abs(a.currentTime - b.currentTime) > 0.08)
+    b.currentTime = a.currentTime;
 }, 500);
-$('#dl').onclick = () => location.href = `${API}/api/jobs/${job.id}/result`;
+$('#dl').onclick = () => location.href = `/api/jobs/${job.id}/result`;
 
 (function splitDrag() {
   const s = $('#split'), c = $('#cmp'); let on = false;

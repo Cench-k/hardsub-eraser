@@ -42,11 +42,13 @@ class Job:
     detail: str = ""
     out: str | None = None
     error: str | None = None
+    mask: str | None = None        # 사용자가 그린 마스크 PNG 경로
     _subs: list = field(default_factory=list, repr=False)
 
     def public(self):
         d = {k: v for k, v in asdict(self).items() if not k.startswith("_")}
         d["out"] = bool(self.out)
+        d["mask"] = bool(self.mask)
         return d
 
     def emit(self, **kw):
@@ -245,6 +247,8 @@ def start(jid: str, params: dict):
                 j.emit(stage=stage, progress=(done / total if total else 0.0), detail=detail)
 
             run(j.src, out,
+                mask_path=j.mask if params.get("use_mask") else None,
+                mask_mode=params.get("mask_mode", "detect"),
                 region=params.get("region", "0.70,1.0"),
                 det_stride=int(params.get("det_stride", 1)),
                 # None을 넘기면 이 기기에 맞춰 자동으로 정한다
@@ -295,6 +299,39 @@ def stream(jid: str):
                                       "X-Accel-Buffering": "no"})
 
 
+@app.post("/api/jobs/{jid}/mask")
+def set_mask(jid: str, payload: dict):
+    """UI에서 그린 마스크(PNG data URL)를 저장한다.
+
+    캔버스를 영상 해상도로 잡아두므로 보통 그대로 쓰이지만,
+    크기가 다르면 파이프라인이 알아서 맞춘다.
+    """
+    import base64
+
+    data = payload.get("png", "")
+    if "," in data:
+        data = data.split(",", 1)[1]
+    if not data:
+        raise HTTPException(400, "png 필드가 필요합니다")
+
+    j = _job(jid)
+    path = os.path.join(WORK, jid, "mask.png")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    raw = base64.b64decode(data)
+    with open(path, "wb") as f:
+        f.write(raw)
+
+    m = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
+    if m is None:
+        raise HTTPException(400, "PNG를 읽을 수 없습니다")
+    a = m[:, :, 3] if (m.ndim == 3 and m.shape[2] == 4) else (
+        cv2.cvtColor(m, cv2.COLOR_BGR2GRAY) if m.ndim == 3 else m)
+    painted = int((a > 127).sum())
+    j.mask = path if painted else None
+    return {"ok": True, "w": int(m.shape[1]), "h": int(m.shape[0]),
+            "painted_px": painted}
+
+
 @app.get("/api/jobs/{jid}/source")
 def source(jid: str):
     """원본 영상. 비포/애프터 비교에서 왼쪽에 쓴다."""
@@ -320,6 +357,48 @@ def backends():
         return {"onnx": av, "active": describe(pick_providers(None)) if av else None}
     except ImportError as e:
         return {"onnx": [], "active": None, "error": str(e)}
+
+
+START_TIME = time.time()
+_env_cache = None
+
+
+def _env():
+    """백엔드·GPU 정보. nvidia-smi 를 부르므로 한 번만 조사하고 캐시한다
+    (상태 표시등이 몇 초마다 물어보기 때문)."""
+    global _env_cache
+    if _env_cache is None:
+        info = {"backend": None, "vram_mb": None}
+        try:
+            from .engine_onnx import available_backends, describe, pick_providers
+            if available_backends():
+                info["backend"] = describe(pick_providers(None))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from .autotune import detect_vram
+            mb, _ = detect_vram()
+            info["vram_mb"] = mb
+        except Exception:  # noqa: BLE001
+            pass
+        _env_cache = info
+    return _env_cache
+
+
+@app.get("/api/health")
+def health():
+    """상태 표시등용. 터미널이 안 보여도 서버가 살아있는지 UI에서 알 수 있게."""
+    running = [j for j in JOBS.values() if j.status == "running"]
+    cur = running[0] if running else None
+    return {
+        "ok": True,
+        "uptime_s": int(time.time() - START_TIME),
+        "jobs": len(JOBS),
+        "busy": bool(running),
+        "stage": cur.stage if cur else "",
+        "progress": cur.progress if cur else 0.0,
+        **_env(),
+    }
 
 
 _ui = os.path.join(ROOT, "web")
