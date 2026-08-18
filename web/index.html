@@ -172,6 +172,7 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
       </label>
       <label>경계 부드럽게<input type="number" id="feather" value="4" min="0" max="12"></label>
       <label>출력 화질 CRF<input type="number" id="crf" value="18" min="12" max="30"></label>
+      <span class="mono" id="crfhint" style="max-width:330px"></span>
       <button class="primary" id="go" style="margin-left:auto">처리 시작</button>
     </div>
     <div id="prog" class="hide" style="margin-top:16px">
@@ -270,9 +271,19 @@ async function upload(f) {
   if (!r.ok) { drop.textContent = '열기 실패: ' + (await r.text()); return; }
   job = await r.json();
   W = job.info.w; H = job.info.h; N = job.info.n;
+  const mb = job.info.size / 1048576, mbps = job.info.bitrate / 1e6;
+  const secs = job.info.duration;
+  const dur = secs >= 60 ? `${Math.floor(secs/60)}분 ${Math.round(secs%60)}초` : `${secs.toFixed(1)}초`;
   $('#meta').textContent =
-    `${W}×${H} · ${job.info.fps.toFixed(2)}fps · ${N} 프레임 · ${(N/job.info.fps).toFixed(1)}초`;
+    `${W}×${H} · ${job.info.fps.toFixed(2)}fps · ${dur} · ${mb.toFixed(1)}MB · ${mbps.toFixed(2)} Mbps (${job.info.quality})`;
   drop.textContent = f.name;
+
+  // 원본이 이미 강하게 압축돼 있으면 CRF를 낮게 줘도 없는 화질이 생기지 않고
+  // 용량만 몇 배로 커진다. 원본 압축 정도에 맞춰 기본값을 잡아준다.
+  $('#crf').value = job.info.crf;
+  $('#crfhint').textContent =
+    `원본이 ${mbps.toFixed(2)} Mbps 라 CRF ${job.info.crf} 을 잡았습니다. ` +
+    `낮출수록 고화질·큰 파일 (12~30)`;
   $('#seek').max = Math.max(0, N - 1);
 
   // 캔버스는 영상 해상도 그대로. 화면에는 CSS로 줄여 보여준다.

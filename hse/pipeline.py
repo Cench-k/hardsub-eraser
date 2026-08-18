@@ -67,7 +67,39 @@ def probe(path):
         n=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
     )
     cap.release()
+
+    info["size"] = os.path.getsize(path)
+    dur = info["n"] / info["fps"] if info["fps"] else 0
+    info["duration"] = dur
+    info["bitrate"] = int(info["size"] * 8 / dur) if dur > 0 else 0
+    info.update(suggest_crf(info))
     return info
+
+
+def suggest_crf(info):
+    """원본 압축 정도를 보고 출력 CRF를 추천한다.
+
+    CRF는 파일에 저장되는 값이 아니라 인코딩 설정이라 되읽을 수 없다. 대신
+    픽셀당 비트수(bpp)로 원본이 얼마나 눌려 있는지를 가늠한다.
+
+        bpp = 비트레이트 / (가로 x 세로 x fps)
+
+    원본이 이미 강하게 압축돼 있으면 CRF를 낮게 줘봐야 없는 화질이 생기지 않고
+    용량만 몇 배로 불어난다(실측: 47MB 원본이 CRF 18에서 131MB가 됐다).
+    """
+    px = info["w"] * info["h"] * info["fps"]
+    bpp = info["bitrate"] / px if px else 0
+    if bpp <= 0:
+        return {"bpp": 0, "crf": 18, "quality": "알 수 없음"}
+    if bpp < 0.035:
+        crf, q = 23, "강하게 압축된 원본"
+    elif bpp < 0.060:
+        crf, q = 21, "보통으로 압축된 원본"
+    elif bpp < 0.100:
+        crf, q = 19, "고화질 원본"
+    else:
+        crf, q = 18, "매우 고화질 원본"
+    return {"bpp": round(bpp, 4), "crf": crf, "quality": q}
 
 
 def parse_region(spec, h):
