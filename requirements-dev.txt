@@ -1,0 +1,16 @@
+# 개발용. ONNX 내보내기와 수치 비교를 하려면 torch가 필요하다.
+# 실행만 할 거면 requirements.txt 만으로 충분하다.
+#
+#   pip install -r requirements.txt
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#   pip install -r requirements-dev.txt
+#
+# cu118을 쓰는 이유: Pascal(sm_61, GTX 10xx)까지 커버한다.
+# RTX 50 계열(sm_120)만 쓴다면 cu128을 골라야 한다.
+
+-r requirements.txt
+
+torch==2.7.1+cu118
+torchvision==0.22.1+cu118
+onnx==1.20.1
+filesplit==4.1.0

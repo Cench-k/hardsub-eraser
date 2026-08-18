@@ -1,0 +1,28 @@
+# 가상환경 / 빌드 산출물
+.venv/
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# 모델 가중치는 저장소에 넣지 않는다.
+# Git LFS는 무료 한도가 스토리지·대역폭 각 1GB뿐이라 배포가 시작되면 과금된다.
+# Releases 첨부는 무료이고 대역폭 제한도 없다 -> tools/fetch_models.py 로 받는다.
+models/
+
+# 참고용으로 클론한 남의 저장소 (VSR). 여기에 커밋하지 않는다.
+vendor/
+
+# 테스트 영상과 중간 산출물
+samples/
+*.mp4
+*.mkv
+*.mov
+*.avi
+
+# 로컬 실행 흔적
+srv.log
+srv.err
+body.json
+*.dat

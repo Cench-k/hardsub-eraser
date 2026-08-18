@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>하드섭 지우개</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --line:#e3e6ea; --fg:#14171a; --muted:#697280;
+  --accent:#2f6df6; --accent-fg:#fff; --band:rgba(47,109,246,.22); --ok:#1a7f45; --err:#c0392b;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#14171b; --panel:#1c2027; --line:#2c323b; --fg:#e8eaed; --muted:#98a1ad;
+  --accent:#5b8dff; --accent-fg:#0b0d10; --band:rgba(91,141,255,.26); --ok:#4ade80; --err:#f87171;
+}}
+:root[data-theme=dark]{
+  --bg:#14171b; --panel:#1c2027; --line:#2c323b; --fg:#e8eaed; --muted:#98a1ad;
+  --accent:#5b8dff; --accent-fg:#0b0d10; --band:rgba(91,141,255,.26); --ok:#4ade80; --err:#f87171;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif}
+header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;
+  align-items:baseline;gap:14px;flex-wrap:wrap}
+h1{font-size:18px;margin:0;font-weight:650;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:13px}
+main{max-width:1100px;margin:0 auto;padding:24px;display:grid;gap:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+.card h2{font-size:14px;margin:0 0 12px;font-weight:650;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.04em}
+button{font:inherit;padding:9px 16px;border-radius:8px;border:1px solid var(--line);
+  background:var(--panel);color:var(--fg);cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#drop{border:2px dashed var(--line);border-radius:12px;padding:44px;text-align:center;
+  color:var(--muted);cursor:pointer}
+#drop.over{border-color:var(--accent);background:var(--band)}
+#stage{position:relative;display:inline-block;max-width:100%;line-height:0}
+#shot{max-width:100%;border-radius:8px;display:block}
+#band{position:absolute;left:0;right:0;background:var(--band);
+  border-top:2px solid var(--accent);border-bottom:2px solid var(--accent);cursor:move}
+.handle{position:absolute;left:0;right:0;height:14px;cursor:ns-resize}
+.handle.t{top:-7px} .handle.b{bottom:-7px}
+#boxes{position:absolute;inset:0;pointer-events:none}
+#boxes i{position:absolute;border:1.5px solid var(--ok);border-radius:2px;display:block}
+#boxes i.mark{border-color:var(--muted);border-style:dashed}
+label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+input[type=number],select{font:inherit;padding:7px 9px;border-radius:7px;
+  border:1px solid var(--line);background:var(--bg);color:var(--fg);width:110px}
+input[type=range]{width:100%}
+.bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent);width:0;transition:width .25s}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--muted)}
+.hide{display:none!important}
+.err{color:var(--err)} .ok{color:var(--ok)}
+#cmp{position:relative;max-width:100%;overflow:hidden;border-radius:8px;line-height:0}
+#cmp video{display:block;max-width:100%}
+#cmp .after{position:absolute;inset:0;overflow:hidden;width:50%}
+#cmp .after video{max-width:none}
+#split{position:absolute;top:0;bottom:0;width:3px;background:var(--accent);cursor:ew-resize}
+.tag{font-size:11px;padding:2px 7px;border-radius:99px;background:var(--band);color:var(--fg)}
+</style>
+</head>
+<body>
+<header>
+  <h1>하드섭 지우개</h1>
+  <span class="sub">영상에 박힌 자막을 지웁니다 · 100% 로컬 처리</span>
+  <span class="sub mono" id="backend" style="margin-left:auto"></span>
+</header>
+
+<main>
+  <section class="card" id="c-open">
+    <h2>1 · 영상 열기</h2>
+    <div id="drop">영상을 여기로 끌어다 놓거나 클릭해서 선택하세요
+      <div class="mono" style="margin-top:8px">mp4 · mkv · mov · avi</div>
+    </div>
+    <input type="file" id="file" accept="video/*" class="hide">
+    <div class="mono" id="meta" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card hide" id="c-region">
+    <h2>2 · 자막 구역 지정</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button id="scan">자막 자동 탐색</button>
+      <span class="mono" id="scaninfo"></span>
+    </div>
+    <div id="stage">
+      <img id="shot" alt="">
+      <div id="boxes"></div>
+      <div id="band"><div class="handle t"></div><div class="handle b"></div></div>
+    </div>
+    <div style="margin-top:12px">
+      <input type="range" id="seek" min="0" value="0" step="1">
+      <div class="row" style="justify-content:space-between">
+        <span class="mono" id="pos">0</span>
+        <span class="mono" id="regionTxt"></span>
+      </div>
+    </div>
+    <p class="sub" style="margin:10px 0 0">
+      파란 띠 안에서만 자막을 찾아 지웁니다. 띠를 끌어 옮기거나 위/아래 가장자리로 크기를 조절하세요.
+    </p>
+  </section>
+
+  <section class="card hide" id="c-run">
+    <h2>3 · 설정 및 실행</h2>
+    <div class="row" style="gap:16px">
+      <label>품질
+        <select id="preset">
+          <option value="auto" selected>자동 (이 PC에 맞춤)</option>
+          <option value="fast">빠르게</option>
+          <option value="balanced">균형</option>
+          <option value="best">최고</option>
+        </select>
+      </label>
+      <label>경계 부드럽게<input type="number" id="feather" value="4" min="0" max="12"></label>
+      <label>출력 화질 CRF<input type="number" id="crf" value="18" min="12" max="30"></label>
+      <label>감지 간격<input type="number" id="stride" value="1" min="1" max="10"></label>
+      <button class="primary" id="go" style="margin-left:auto">처리 시작</button>
+    </div>
+    <div id="prog" class="hide" style="margin-top:16px">
+      <div class="bar"><i id="pbar"></i></div>
+      <div class="row" style="justify-content:space-between;margin-top:6px">
+        <span class="mono" id="pstage"></span><span class="mono" id="ppct"></span>
+      </div>
+    </div>
+    <div class="mono err hide" id="errbox" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card hide" id="c-out">
+    <h2>4 · 결과</h2>
+    <div id="cmp">
+      <video id="vBefore" muted loop playsinline></video>
+      <div class="after"><video id="vAfter" muted loop playsinline></video></div>
+      <div id="split" style="left:50%"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="tag">왼쪽 원본</span><span class="tag">오른쪽 처리 후</span>
+      <button id="play">재생 / 정지</button>
+      <button class="primary" id="dl" style="margin-left:auto">다운로드</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const API = '';
+let job = null, H = 0, W = 0, N = 0, shotW = 0, shotH = 0;
+let region = [0.70, 1.0];
+
+// ---------- 백엔드 표시 ----------
+fetch(API + '/api/backends').then(r => r.json()).then(d => {
+  $('#backend').textContent = d.active ? '실행: ' + d.active : '실행: CPU';
+}).catch(() => {});
+
+// ---------- 파일 열기 ----------
+const drop = $('#drop');
+drop.onclick = () => $('#file').click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); };
+$('#file').onchange = e => e.target.files[0] && upload(e.target.files[0]);
+
+async function upload(f) {
+  drop.textContent = '업로드 중… ' + f.name;
+  const fd = new FormData(); fd.append('file', f);
+  const r = await fetch(API + '/api/jobs', { method: 'POST', body: fd });
+  if (!r.ok) { drop.textContent = '열기 실패: ' + (await r.text()); return; }
+  job = await r.json();
+  W = job.info.w; H = job.info.h; N = job.info.n;
+  $('#meta').textContent = `${W}×${H} · ${job.info.fps.toFixed(2)}fps · ${N} 프레임 · ${(N / job.info.fps).toFixed(1)}초`;
+  drop.textContent = f.name;
+  $('#seek').max = Math.max(0, N - 1);
+  $('#c-region').classList.remove('hide');
+  $('#c-run').classList.remove('hide');
+  showFrame(0);
+}
+
+// ---------- 프레임 미리보기 ----------
+function showFrame(n) {
+  $('#pos').textContent = `프레임 ${n}`;
+  $('#shot').src = `${API}/api/jobs/${job.id}/frame?n=${n}&w=860`;
+}
+$('#shot').onload = () => {
+  shotW = $('#shot').clientWidth; shotH = $('#shot').clientHeight;
+  drawBand();
+};
+$('#seek').oninput = e => showFrame(+e.target.value);
+
+// ---------- 구역 밴드 ----------
+function drawBand() {
+  const b = $('#band');
+  b.style.top = (region[0] * shotH) + 'px';
+  b.style.height = ((region[1] - region[0]) * shotH) + 'px';
+  $('#regionTxt').textContent =
+    `구역 y ${Math.round(region[0] * H)} ~ ${Math.round(region[1] * H)} (${(region[0] * 100).toFixed(0)}% ~ ${(region[1] * 100).toFixed(0)}%)`;
+}
+(function bandDrag() {
+  const band = $('#band'); let mode = null, sy = 0, s0 = 0, s1 = 0;
+  const start = m => e => {
+    mode = m; sy = e.clientY; s0 = region[0]; s1 = region[1];
+    e.preventDefault(); e.stopPropagation();
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  };
+  const move = e => {
+    if (!mode || !shotH) return;
+    const d = (e.clientY - sy) / shotH;
+    if (mode === 'move') {
+      const w = s1 - s0;
+      let a = Math.min(Math.max(0, s0 + d), 1 - w);
+      region = [a, a + w];
+    } else if (mode === 't') region = [Math.min(Math.max(0, s0 + d), s1 - .02), s1];
+    else region = [s0, Math.max(Math.min(1, s1 + d), s0 + .02)];
+    drawBand();
+  };
+  const up = () => { mode = null;
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up); };
+  band.addEventListener('mousedown', start('move'));
+  band.querySelector('.t').addEventListener('mousedown', start('t'));
+  band.querySelector('.b').addEventListener('mousedown', start('b'));
+})();
+
+// ---------- 자막 자동 탐색 ----------
+$('#scan').onclick = async () => {
+  $('#scan').disabled = true; $('#scaninfo').textContent = '탐색 중…';
+  try {
+    const d = await (await fetch(`${API}/api/jobs/${job.id}/scan`)).json();
+    const bx = $('#boxes'); bx.innerHTML = '';
+    const scale = shotW / d.width;
+    const add = (o, cls) => {
+      const [x1, y1, x2, y2] = o.box, i = document.createElement('i');
+      if (cls) i.className = cls;
+      i.style.cssText = `left:${x1 * scale}px;top:${y1 * scale}px;width:${(x2 - x1) * scale}px;height:${(y2 - y1) * scale}px`;
+      bx.appendChild(i);
+    };
+    (d.watermarks || []).slice(0, 30).forEach(o => add(o, 'mark'));
+    (d.boxes || []).slice(0, 60).forEach(o => add(o, ''));
+
+    if (d.suggested_region) {
+      region = d.suggested_region; drawBand();
+      let msg = `<span class="ok">자막 구간을 찾아 구역을 맞췄습니다</span>`;
+      if (d.static_count) msg += ` · 고정 워터마크 ${d.static_count}개는 제외했습니다 (점선)`;
+      $('#scaninfo').innerHTML = msg;
+    } else {
+      $('#scaninfo').textContent = d.static_count
+        ? '고정 워터마크만 찾았습니다. 지우려면 구역을 직접 지정하세요.'
+        : '텍스트를 찾지 못했습니다. 구역을 직접 지정하세요.';
+    }
+  } catch (e) { $('#scaninfo').textContent = '탐색 실패: ' + e; }
+  $('#scan').disabled = false;
+};
+
+// ---------- 실행 ----------
+// auto는 서버가 VRAM을 재고 실제로 돌려 보며 정한다 (hse/autotune.py)
+const PRESET = { auto: [null, null], fast: [5, 4], balanced: [8, 5], best: [14, 5] };
+$('#go').onclick = async () => {
+  const [n_refs, group_size] = PRESET[$('#preset').value];
+  $('#go').disabled = true; $('#prog').classList.remove('hide');
+  $('#errbox').classList.add('hide');
+  const body = {
+    region: `${region[0].toFixed(4)},${region[1].toFixed(4)}`,
+    n_refs, group_size,
+    feather: +$('#feather').value, crf: +$('#crf').value,
+    det_stride: +$('#stride').value
+  };
+  const r = await fetch(`${API}/api/jobs/${job.id}/run`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { fail(await r.text()); return; }
+  listen();
+};
+
+const STAGE = { detect: '자막 감지', cache: '밴드 캐시', paint: '인페인팅' };
+function listen() {
+  const es = new EventSource(`${API}/api/jobs/${job.id}/stream`);
+  es.onmessage = e => {
+    const j = JSON.parse(e.data);
+    $('#pbar').style.width = (j.progress * 100).toFixed(1) + '%';
+    $('#pstage').textContent = (STAGE[j.stage] || j.stage || '') + (j.detail ? ' · ' + j.detail : '');
+    $('#ppct').textContent = (j.progress * 100).toFixed(0) + '%';
+    if (j.status === 'done') { es.close(); done(); }
+    if (j.status === 'error') { es.close(); fail(j.error); }
+  };
+  es.onerror = () => es.close();
+}
+function fail(msg) {
+  $('#go').disabled = false;
+  $('#errbox').classList.remove('hide');
+  $('#errbox').textContent = msg;
+}
+function done() {
+  $('#go').disabled = false;
+  $('#pstage').innerHTML = '<span class="ok">완료</span>';
+  $('#c-out').classList.remove('hide');
+  $('#vBefore').src = `${API}/api/jobs/${job.id}/source`;
+  $('#vAfter').src = `${API}/api/jobs/${job.id}/result`;
+  $('#c-out').scrollIntoView({ behavior: 'smooth' });
+}
+$('#play').onclick = () => {
+  const a = $('#vBefore'), b = $('#vAfter');
+  if (a.paused) { b.currentTime = a.currentTime; a.play(); b.play(); }
+  else { a.pause(); b.pause(); }
+};
+// 두 영상이 어긋나면 비교가 무의미하므로 주기적으로 맞춘다
+setInterval(() => {
+  const a = $('#vBefore'), b = $('#vAfter');
+  if (!a.paused && Math.abs(a.currentTime - b.currentTime) > 0.08) b.currentTime = a.currentTime;
+}, 500);
+$('#dl').onclick = () => location.href = `${API}/api/jobs/${job.id}/result`;
+
+(function splitDrag() {
+  const s = $('#split'), c = $('#cmp'); let on = false;
+  s.onmousedown = e => { on = true; e.preventDefault(); };
+  document.addEventListener('mouseup', () => on = false);
+  document.addEventListener('mousemove', e => {
+    if (!on) return;
+    const r = c.getBoundingClientRect();
+    const x = Math.min(Math.max(0, e.clientX - r.left), r.width);
+    s.style.left = x + 'px';
+    c.querySelector('.after').style.width = x + 'px';
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# 실행용 (배포판). torch 없음 — onnxruntime 하나로 NVIDIA/AMD/Intel/CPU 커버.
+#
+# 설치 순서가 중요하다. rapidocr-onnxruntime이 CPU 전용 onnxruntime을 의존성으로
+# 끌고 오기 때문에, 그대로 두면 DirectML provider가 사라진다.
+#
+#   pip install -r requirements.txt
+#   pip uninstall -y onnxruntime
+#   pip install onnxruntime-directml
+#
+# 확인:  python -c "import onnxruntime as o; print(o.get_available_providers())"
+#        -> ['DmlExecutionProvider', 'CPUExecutionProvider'] 가 나와야 한다.
+
+opencv-python==5.0.0.93
+numpy==2.4.6
+rapidocr-onnxruntime==1.4.4
+tqdm==4.70.0
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+python-multipart
+
+# NVIDIA에서 더 빠르게 하고 싶으면 directml 대신:
+#   pip install onnxruntime-gpu     (CUDA/cuDNN 별도 필요)
+onnxruntime-directml==1.24.4
