@@ -66,6 +66,28 @@ def c_ffmpeg():
                           ).stdout.splitlines()[0][:60]
 
 
+def c_batfile():
+    """실행.bat이 cmd.exe가 읽을 수 있는 형태인지.
+
+    cmd는 .bat을 OEM 코드페이지(한국어 Windows는 949)로 읽는다. UTF-8 한글이
+    들어가면 깨져서 쓰레기 명령으로 실행되고, BOM이 있으면 첫 줄을 못 읽는다.
+    실제로 v0.1.0을 이 문제로 다시 냈다.
+    """
+    hits = [f for f in os.listdir(APP) if f.lower().endswith(".bat")]
+    if not hits:
+        raise FileNotFoundError("bat 파일이 없다")
+    for name in hits:
+        raw = open(os.path.join(APP, name), "rb").read()
+        if raw[:3] == b"\xef\xbb\xbf":
+            raise ValueError(f"{name}: UTF-8 BOM이 있다")
+        bad = [b for b in raw if b > 127]
+        if bad:
+            raise ValueError(f"{name}: 비ASCII 바이트 {len(bad)}개 (cmd가 깨뜨린다)")
+        if raw.count(b"\n") != raw.count(b"\r\n"):
+            raise ValueError(f"{name}: LF 단독 줄바꿈 (CRLF여야 한다)")
+    return " ".join(hits)
+
+
 def c_endtoend():
     """자막을 태운 짧은 영상을 만들어 실제로 지워 본다."""
     sys.path.insert(0, APP)
@@ -100,6 +122,7 @@ if __name__ == "__main__":
     check("ONNX 모델", c_models)
     check("hse 패키지", c_hse)
     check("ffmpeg / ffprobe", c_ffmpeg)
+    check("실행 배치파일", c_batfile)
     check("전체 파이프라인", c_endtoend)
 
     print()

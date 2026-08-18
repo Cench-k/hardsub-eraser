@@ -45,11 +45,14 @@ PKGS = [
 ]
 ORT_PKG = "onnxruntime-directml==1.24.4"
 
+# 한글을 절대 넣지 않는다. cmd.exe는 .bat을 OEM 코드페이지(한국어 Windows는 949)로
+# 읽기 때문에 UTF-8 한글이 깨져서 쓰레기 명령으로 실행된다. BOM도 마찬가지로 토한다.
+# 순수 ASCII + CRLF로만 쓴다. 한국어 안내는 파이썬 쪽에서 출력한다.
 START_BAT = """@echo off
 chcp 65001 >nul
 cd /d "%~dp0"
 set "PATH=%~dp0runtime;%PATH%"
-echo 하드섭 지우개를 시작합니다...
+echo Starting hardsub eraser ... http://127.0.0.1:8756
 start "" http://127.0.0.1:8756
 runtime\\python.exe -m hse.server
 pause
@@ -156,7 +159,9 @@ def main():
         shutil.copy2(p, os.path.join(app, "models", "onnx"))
     for f in ("LICENSE", "THIRD-PARTY-NOTICES.md", "README.md"):
         shutil.copy2(os.path.join(ROOT, f), app)
-    open(os.path.join(app, "실행.bat"), "w", encoding="utf-8-sig").write(START_BAT)
+    # ascii + CRLF. BOM(utf-8-sig)을 붙이면 cmd가 첫 줄을 못 읽는다.
+    with open(os.path.join(app, "실행.bat"), "w", encoding="ascii", newline="\r\n") as f:
+        f.write(START_BAT)
 
     # 배포판에는 torch가 없다. 있으면 import 에러만 나므로 아예 뺀다.
     shutil.rmtree(os.path.join(app, "hse", "sttn"), ignore_errors=True)

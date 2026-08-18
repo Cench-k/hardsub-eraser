@@ -1,0 +1,8 @@
+# .bat 은 반드시 CRLF. LF 단독이면 cmd.exe 가 줄을 잘못 끊어 읽는다.
+*.bat text eol=crlf
+
+# 나머지 텍스트는 저장소 안에서 LF 로 통일
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.html text eol=lf
