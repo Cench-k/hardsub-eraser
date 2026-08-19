@@ -65,10 +65,15 @@ input[type=range]{width:100%}
 .hint{font-size:12.5px;color:var(--muted);margin:10px 0 0}
 kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
   border-bottom-width:2px;border-radius:5px;background:var(--bg)}
-#cmp{position:relative;max-width:100%;overflow:hidden;border-radius:8px;line-height:0}
-#cmp video{display:block;max-width:100%}
+/* 결과 비교창도 미리보기와 같은 이유로 높이를 제한한다. 세로 영상이면
+   원본 비율대로 두었을 때 화면을 한참 벗어난다. inline-block 이라 폭은
+   영상 비율에 맞춰 줄어든다. */
+#cmp{position:relative;display:inline-block;max-width:100%;overflow:hidden;
+  border-radius:8px;line-height:0}
+#cmp video{display:block;max-width:100%;max-height:var(--ch,46vh);
+  width:auto;height:auto}
 #cmp .after{position:absolute;inset:0;overflow:hidden;width:50%}
-#cmp .after video{max-width:none}
+#cmp .after video{max-width:none;max-height:var(--ch,46vh)}
 #split{position:absolute;top:0;bottom:0;width:3px;background:var(--accent);cursor:ew-resize}
 .tag{font-size:11px;padding:2px 7px;border-radius:99px;background:var(--line);color:var(--fg)}
 
@@ -637,14 +642,9 @@ async function reattach() {
       listen();
       return;
     }
-    const last = (d.jobs || []).find(j => j.out);
-    if (last) {
-      job = last;
-      W = job.info.w; H = job.info.h; N = job.info.n;
-      $('#c-out').classList.remove('hide');
-      $('#vBefore').src = `/api/jobs/${last.id}/source`;
-      $('#vAfter').src = `/api/jobs/${last.id}/result`;
-    }
+    // 돌고 있는 작업이 없으면 아무것도 띄우지 않는다.
+    // 지난 결과를 자동으로 펼쳐 두면 새 영상을 열려는데 예전 결과가 계속
+    // 남아 있어 헷갈린다. 지난 결과는 아래 '지난 작업' 목록에서 받으면 된다.
   } catch {}
 }
 
@@ -672,6 +672,19 @@ async function loadHist() {
 async function revealOut(e) {
   try { await fetch(`/api/outputs/${e}/reveal`, { method: 'POST' }); } catch {}
 }
+
+$('#clean').onclick = async () => {
+  if (!confirm('임시 파일을 지웁니다. 완성된 영상은 지워지지 않습니다.')) return;
+  const b = $('#clean');
+  b.disabled = true;
+  $('#cleaninfo').textContent = '정리 중…';
+  try {
+    const d = await (await fetch('/api/cleanup', { method: 'POST' })).json();
+    $('#cleaninfo').textContent = `${d.removed}개 폴더, ${d.freed_mb} MB 정리했습니다`;
+    loadHist();
+  } catch (e) { $('#cleaninfo').textContent = '정리 실패: ' + e; }
+  b.disabled = false;
+};
 
 loadHist();
 reattach();
