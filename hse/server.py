@@ -10,6 +10,8 @@ import json
 import os
 import queue
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -29,6 +31,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORK = os.path.join(tempfile.gettempdir(), "hardsub_eraser")
 os.makedirs(WORK, exist_ok=True)
 
+# 결과물은 임시 폴더에 두지 않는다. %TEMP% 는 AppData 밑이라 탐색기에서 숨겨져
+# 있고 Windows 디스크 정리가 언제든 비운다. 실제로 결과물을 못 찾는 일이 있었다.
+# 작업 폴더에는 업로드 원본과 마스크만 남고, 완성본은 여기로 간다.
+OUT_DIR = os.path.join(os.path.expanduser("~"), "Videos", "하드섭 지우개")
+os.makedirs(OUT_DIR, exist_ok=True)
+
 
 @dataclass
 class Job:
@@ -43,6 +51,7 @@ class Job:
     error: str | None = None
     mask: str | None = None        # 사용자가 그린 마스크 PNG 경로
     _subs: list = field(default_factory=list, repr=False)
+    _abort: threading.Event = field(default_factory=threading.Event, repr=False)
 
     def public(self):
         """UI로 내보낼 필드만 직접 만든다.
@@ -99,12 +108,22 @@ def restore_jobs():
         d = os.path.join(WORK, jid)
         if not os.path.isdir(d) or jid in JOBS:
             continue
-        out = os.path.join(d, "output.mp4")
+        meta = {}
+        mp = os.path.join(d, "meta.json")
+        if os.path.isfile(mp):
+            try:
+                meta = json.load(open(mp, encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = {}
+
+        out = meta.get("out") or os.path.join(d, "output.mp4")   # 예전 버전 호환
         srcs = [f for f in os.listdir(d)
                 if f.lower().endswith((".mp4", ".mkv", ".mov", ".avi")) and f != "output.mp4"]
-        if not os.path.isfile(out) and not srcs:
+        src = meta.get("src") or (os.path.join(d, srcs[0]) if srcs else out)
+        if not os.path.isfile(src):
+            src = out
+        if not os.path.isfile(src):
             continue
-        src = os.path.join(d, srcs[0]) if srcs else out
         try:
             info = probe(src)
         except Exception:  # noqa: BLE001 — 깨진 폴더는 건너뛴다
@@ -117,6 +136,28 @@ def restore_jobs():
         if os.path.isfile(m):
             j.mask = m
         JOBS[jid] = j
+
+
+def save_meta(j: Job):
+    """결과물 위치를 작업 폴더에 남긴다. 출력은 임시 폴더 밖에 저장하므로
+    이게 없으면 서버를 다시 켤 때 어느 결과물이 어느 작업인지 알 수 없다."""
+    try:
+        with open(os.path.join(WORK, j.id, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump({"src": j.src, "out": j.out}, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def unique_path(path):
+    """같은 이름이 있으면 _2, _3 을 붙인다. 덮어쓰지 않는다."""
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    for i in range(2, 1000):
+        p = f"{base}_{i}{ext}"
+        if not os.path.exists(p):
+            return p
+    return f"{base}_{uuid.uuid4().hex[:6]}{ext}"
 
 
 def detector():
@@ -206,6 +247,51 @@ async def create_job(file: UploadFile = File(None), path: str = Form(None)):
     return job.public()
 
 
+def _safe_out(name):
+    """OUT_DIR 안의 파일만 허용. 경로 탈출을 막는다."""
+    p = os.path.normpath(os.path.join(OUT_DIR, os.path.basename(name)))
+    if os.path.dirname(p) != os.path.normpath(OUT_DIR) or not os.path.isfile(p):
+        raise HTTPException(404, "파일이 없습니다")
+    return p
+
+
+@app.get("/api/outputs")
+def list_outputs():
+    """완성본 목록. 결과물 폴더를 직접 읽는다.
+
+    작업 폴더(임시)에서 읽으면 임시 파일을 정리하는 순간 이력이 사라진다.
+    실제로 그랬다. 완성본은 별도 폴더에 영구 보관되므로 그쪽이 진실이다.
+    """
+    rows = []
+    if os.path.isdir(OUT_DIR):
+        for f in os.listdir(OUT_DIR):
+            p = os.path.join(OUT_DIR, f)
+            if os.path.isfile(p) and f.lower().endswith((".mp4", ".mkv", ".mov")):
+                st = os.stat(p)
+                rows.append({"name": f, "size": st.st_size, "mtime": st.st_mtime,
+                             "path": p})
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    return {"dir": OUT_DIR, "outputs": rows}
+
+
+@app.get("/api/outputs/{name}")
+def get_output(name: str):
+    p = _safe_out(name)
+    return FileResponse(p, media_type="video/mp4", filename=os.path.basename(p))
+
+
+@app.post("/api/outputs/{name}/reveal")
+def reveal_output(name: str):
+    p = _safe_out(name)
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer.exe", "/select,", os.path.normpath(p)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", p])
+    else:
+        subprocess.Popen(["xdg-open", os.path.dirname(p)])
+    return {"ok": True, "path": p}
+
+
 @app.get("/api/jobs")
 def list_jobs():
     """지난 작업 목록. 서버를 다시 켜도 결과물을 다시 받을 수 있게 한다."""
@@ -216,6 +302,7 @@ def list_jobs():
         row["name"] = os.path.basename(j.src)
         row["out_size"] = os.path.getsize(j.out) if (j.out and os.path.isfile(j.out)) else 0
         row["mtime"] = os.path.getmtime(j.out) if (j.out and os.path.isfile(j.out)) else 0
+        row["out_path"] = j.out or ""
         rows.append(row)
     rows.sort(key=lambda r: r["mtime"], reverse=True)
     return {"jobs": rows}
@@ -332,14 +419,19 @@ def scan(jid: str, samples: int = 24, static_ratio: float = 0.6):
 @app.post("/api/jobs/{jid}/run")
 def start(jid: str, params: dict):
     j = _job(jid)
-    if j.status == "running":
-        raise HTTPException(409, "이미 처리 중입니다")
+    # 전역으로 막는다. 작업 단위로만 막으면 서로 다른 작업 둘이 동시에 GPU를
+    # 물어 3GB 같은 환경에서는 둘 다 기어가거나 메모리가 터진다.
+    busy = [x for x in JOBS.values() if x.status == "running"]
+    if busy:
+        raise HTTPException(409, f"이미 다른 작업이 처리 중입니다 ({busy[0].id})")
 
-    out = os.path.join(WORK, jid, "output.mp4")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    name = os.path.splitext(os.path.basename(j.src))[0]
+    out = unique_path(os.path.join(OUT_DIR, f"{name}_자막제거.mp4"))
+    os.makedirs(OUT_DIR, exist_ok=True)
+    j._abort.clear()
 
     def worker():
-        from .pipeline import run
+        from .pipeline import Aborted, run
         try:
             j.emit(status="running", stage="detect", progress=0.0, error=None, out=None)
 
@@ -361,8 +453,20 @@ def start(jid: str, params: dict):
                 backend=params.get("backend", "auto"),
                 device=params.get("device", "auto"),
                 on_progress=on_progress,
+                should_abort=j._abort.is_set,
                 quiet=True)
+            j.out = out
+            save_meta(j)
             j.emit(status="done", stage="", progress=1.0, out=out, detail="")
+        except Aborted:
+            for p in (out,):                       # 중간까지 쓰인 파일은 지운다
+                if os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+            j.out = None
+            j.emit(status="canceled", stage="", progress=0.0, detail="", error=None)
         except Exception as e:  # noqa: BLE001 — 워커 스레드라 모두 잡아 상태로 옮긴다
             j.emit(status="error", error=f"{type(e).__name__}: {e}")
 
@@ -430,6 +534,62 @@ def set_mask(jid: str, payload: dict):
     j.mask = path if painted else None
     return {"ok": True, "w": int(m.shape[1]), "h": int(m.shape[0]),
             "painted_px": painted}
+
+
+@app.post("/api/jobs/{jid}/cancel")
+def cancel(jid: str):
+    """처리를 중단한다. 파이프라인이 진행률 갱신 지점마다 이 플래그를 본다."""
+    j = _job(jid)
+    if j.status != "running":
+        return {"ok": False, "detail": "실행 중인 작업이 아닙니다"}
+    j._abort.set()
+    return {"ok": True}
+
+
+@app.post("/api/cleanup")
+def cleanup():
+    """작업 폴더의 임시 파일을 지운다.
+
+    완성본은 OUT_DIR 에 따로 저장되므로 여기서 지워도 결과물은 남는다.
+    지우는 것: 업로드된 원본 사본, 마스크, 밴드 캐시.
+    """
+    freed, removed = 0, 0
+    for jid in list(JOBS):
+        if JOBS[jid].status == "running":
+            continue
+    for name in os.listdir(WORK):
+        d = os.path.join(WORK, name)
+        if not os.path.isdir(d):
+            continue
+        j = JOBS.get(name)
+        if j and j.status == "running":
+            continue
+        size = sum(os.path.getsize(os.path.join(dp, f))
+                   for dp, _, fs in os.walk(d) for f in fs)
+        try:
+            shutil.rmtree(d)
+        except OSError:
+            continue
+        freed += size
+        removed += 1
+        if j:
+            JOBS.pop(name, None)
+    return {"ok": True, "removed": removed, "freed_mb": round(freed / 1048576, 1)}
+
+
+@app.post("/api/jobs/{jid}/reveal")
+def reveal(jid: str):
+    """결과물이 있는 폴더를 탐색기로 연다. 경로를 복사해 찾아가게 하지 않는다."""
+    j = _job(jid)
+    if not j.out or not os.path.isfile(j.out):
+        raise HTTPException(404, "결과물이 없습니다")
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer.exe", "/select,", os.path.normpath(j.out)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", j.out])
+    else:
+        subprocess.Popen(["xdg-open", os.path.dirname(j.out)])
+    return {"ok": True, "path": j.out}
 
 
 @app.get("/api/jobs/{jid}/source")

@@ -29,22 +29,34 @@ DEFAULT_ONNX_DIR = os.path.join(_ROOT, "models", "onnx")
 DEFAULT_TORCH_MODEL = os.path.join(_ROOT, "models", "sttn", "sttn.pth")
 
 
+class Aborted(RuntimeError):
+    """사용자가 취소했을 때. 오류와 구분하려고 따로 둔다."""
+
+
 class Progress:
     """터미널 진행바와 서버 콜백을 동시에 먹인다.
 
     콜백은 매 프레임 부르지 않는다. SSE로 초당 수십 번 밀어봐야 의미가 없고
     직렬화 비용만 든다.
+
+    취소 확인도 여기서 한다. 모든 단계가 이 update()를 지나가므로
+    한 곳만 봐도 어느 단계에서든 멈출 수 있다.
     """
 
-    def __init__(self, stage, total, desc, on_progress=None, quiet=False, every=8):
+    def __init__(self, stage, total, desc, on_progress=None, quiet=False, every=8,
+                 should_abort=None):
         self.stage, self.total, self.on, self.every = stage, total, on_progress, every
         self.bar = None if quiet else tqdm(total=total, desc=desc, unit="f")
+        self.should_abort = should_abort
         self.n = 0
 
     def update(self, k=1, detail=""):
         self.n += k
         if self.bar:
             self.bar.update(k)
+        if self.n % self.every == 0:
+            if self.should_abort and self.should_abort():
+                raise Aborted("사용자가 취소했습니다")
         if self.on and (self.n % self.every == 0 or self.n >= self.total):
             self.on(self.stage, self.n, self.total, detail)
 
@@ -133,7 +145,8 @@ class FFmpegWriter:
         return self.p.wait()
 
 
-def detect_pass(path, y0, y1, stride, detector, on_progress=None, quiet=False):
+def detect_pass(path, y0, y1, stride, detector, on_progress=None, quiet=False,
+                should_abort=None):
     """자막 박스를 전체 프레임 좌표로 수집.
 
     stride > 1 이면 N프레임마다만 감지한다. 감지는 전체 시간의 20% 정도를
@@ -146,7 +159,8 @@ def detect_pass(path, y0, y1, stride, detector, on_progress=None, quiet=False):
     cap = cv2.VideoCapture(path)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     sampled, i = {}, 0
-    with Progress("detect", total, "1/3 자막 감지", on_progress, quiet) as p:
+    with Progress("detect", total, "1/3 자막 감지", on_progress, quiet,
+                  should_abort=should_abort) as p:
         while True:
             ok, fr = cap.read()
             if not ok:
@@ -217,13 +231,15 @@ def choose_band(per_frame, w, h, pad=8):
     return by0, by1, ymin, ymax
 
 
-def cache_pass(path, by0, by1, n, work_dir, on_progress=None, quiet=False):
+def cache_pass(path, by0, by1, n, work_dir, on_progress=None, quiet=False,
+               should_abort=None):
     """처리 밴드를 432x240으로 줄여 memmap에 저장."""
     mm_path = os.path.join(work_dir, "bands.dat")
     mm = np.memmap(mm_path, dtype=np.uint8, mode="w+", shape=(n, MODEL_H, MODEL_W, 3))
     cap = cv2.VideoCapture(path)
     i = 0
-    with Progress("cache", n, "2/3 밴드 캐시", on_progress, quiet) as p:
+    with Progress("cache", n, "2/3 밴드 캐시", on_progress, quiet,
+                  should_abort=should_abort) as p:
         while i < n:
             ok, fr = cap.read()
             if not ok:
@@ -287,7 +303,7 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
         n_refs=None, ref_span=600, feather=4, model=None, crf=18,
         mask_pad=3, det_side_len=960, cache_size=64, work_dir=None,
         backend="auto", onnx_dir=None, on_progress=None, quiet=False,
-        mask_path=None, mask_mode="detect"):
+        mask_path=None, mask_mode="detect", should_abort=None):
     """mask_path: 사용자가 그린 마스크(PNG). 주면 region 대신 이걸 쓴다.
 
     mask_mode
@@ -345,7 +361,8 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
         t0 = time.time()
         per_frame = detect_pass(inp, y0, y1, det_stride,
                                 TextDetector(limit_side_len=det_side_len),
-                                on_progress=on_progress, quiet=quiet)
+                                on_progress=on_progress, quiet=quiet,
+                                should_abort=should_abort)
         if user is not None:
             # 그린 영역 밖으로 삐져나온 감지는 버린다
             per_frame = [[b for b in boxes
@@ -382,7 +399,8 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
     os.makedirs(tmp, exist_ok=True)
 
     mm, mm_path, n_cached = cache_pass(inp, by0, by1, n, tmp,
-                                       on_progress=on_progress, quiet=quiet)
+                                       on_progress=on_progress, quiet=quiet,
+                                should_abort=should_abort)
     n = min(n, n_cached)
 
     engine = make_engine(backend, model, onnx_dir, device, group_size, n_refs,
@@ -407,7 +425,8 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
             writer.write(f)
         buf, idxs = [], []
 
-    with Progress("paint", n, "3/3 인페인팅", on_progress, quiet) as p:
+    with Progress("paint", n, "3/3 인페인팅", on_progress, quiet,
+                  should_abort=should_abort) as p:
         for i in range(n):
             ok, fr = cap.read()
             if not ok:

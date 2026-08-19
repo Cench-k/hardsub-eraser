@@ -190,11 +190,19 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
       </div>
     </div>
     <div class="mono err hide" id="errbox" style="margin-top:10px"></div>
-    <div class="row hide" id="doneRow" style="margin-top:14px">
-      <span class="ok" style="font-weight:600">처리 완료</span>
-      <span class="mono" id="doneInfo"></span>
-      <button class="primary" id="dlNow" style="margin-left:auto">결과 다운로드</button>
-      <button id="toOut">비교해 보기</button>
+    <div class="row hide" id="cancelRow" style="margin-top:10px">
+      <button id="cancel">처리 취소</button>
+      <span class="mono">중단하면 만들던 파일은 지워집니다</span>
+    </div>
+    <div class="hide" id="doneRow" style="margin-top:14px">
+      <div class="row">
+        <span class="ok" style="font-weight:600">처리 완료</span>
+        <span class="mono" id="doneInfo"></span>
+        <button class="primary" id="dlNow" style="margin-left:auto">결과 다운로드</button>
+        <button id="reveal">폴더 열기</button>
+        <button id="toOut">비교해 보기</button>
+      </div>
+      <div class="mono" id="donePath" style="margin-top:8px;word-break:break-all"></div>
     </div>
   </section>
 
@@ -214,6 +222,10 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
 
   <section class="card" id="c-hist">
     <h2>지난 작업</h2>
+    <div class="row" style="margin-bottom:10px">
+      <button id="clean">임시 파일 정리</button>
+      <span class="mono" id="cleaninfo">업로드 사본과 마스크를 지웁니다. 완성본은 남습니다.</span>
+    </div>
     <div id="hist" class="mono">불러오는 중…</div>
     <p class="hint">
       결과물은 임시 폴더에 저장됩니다. Windows 디스크 정리로 지워질 수 있으니
@@ -484,6 +496,8 @@ $('#go').onclick = async () => {
   $('#go').disabled = true;
   $('#prog').classList.remove('hide');
   $('#errbox').classList.add('hide');
+  $('#doneRow').classList.add('hide');
+  $('#cancelRow').classList.remove('hide');
   $('#pstage').textContent = '마스크 전송 중…';
 
   // try/catch 없이 두면 fetch 가 거부될 때 화면이 '전송 중…' 에서 영원히 멈춘다.
@@ -530,14 +544,16 @@ function listen() {
     finished = true;
     clearInterval(poll);
     try { es.close(); } catch {}
-    if (j.status === 'done') done(); else fail(j.error || '알 수 없는 오류');
+    if (j.status === 'done') done();
+    else if (j.status === 'canceled') canceled();
+    else fail(j.error || '알 수 없는 오류');
   };
 
   const es = new EventSource(`/api/jobs/${job.id}/stream`);
   es.onmessage = e => {
     const j = JSON.parse(e.data);
     render(j);
-    if (j.status === 'done' || j.status === 'error') finish(j);
+    if (['done', 'error', 'canceled'].includes(j.status)) finish(j);
   };
   es.onerror = () => { try { es.close(); } catch {} };
 
@@ -545,12 +561,13 @@ function listen() {
     try {
       const j = await (await fetch(`/api/jobs/${job.id}`, { cache: 'no-store' })).json();
       render(j);
-      if (j.status === 'done' || j.status === 'error') finish(j);
+      if (['done', 'error', 'canceled'].includes(j.status)) finish(j);
     } catch {}
   }, 2000);
 }
 function fail(msg) {
   $('#go').disabled = false;
+  $('#cancelRow').classList.add('hide');
   $('#errbox').classList.remove('hide');
   $('#errbox').textContent = msg;
   $('#pstage').textContent = '';
@@ -563,11 +580,15 @@ async function done() {
 
   // 다운로드 버튼을 처리 버튼 바로 아래에 띄운다.
   // 결과 섹션까지 스크롤해야만 받을 수 있으면 있는 줄도 모른다.
+  $('#cancelRow').classList.add('hide');
   $('#doneRow').classList.remove('hide');
   try {
     const d = await (await fetch('/api/jobs', { cache: 'no-store' })).json();
     const me = (d.jobs || []).find(j => j.id === job.id);
-    if (me) $('#doneInfo').textContent = `${(me.out_size / 1048576).toFixed(1)} MB`;
+    if (me) {
+      $('#doneInfo').textContent = `${(me.out_size / 1048576).toFixed(1)} MB`;
+      $('#donePath').textContent = '저장 위치: ' + (me.out_path || '');
+    }
   } catch {}
 
   $('#c-out').classList.remove('hide');
@@ -577,6 +598,25 @@ async function done() {
 }
 $('#dlNow').onclick = () => location.href = `/api/jobs/${job.id}/result`;
 $('#toOut').onclick = () => $('#c-out').scrollIntoView({ behavior: 'smooth' });
+$('#reveal').onclick = async () => {
+  try { await fetch(`/api/jobs/${job.id}/reveal`, { method: 'POST' }); }
+  catch { alert('폴더를 열지 못했습니다'); }
+};
+$('#cancel').onclick = async () => {
+  if (!confirm('처리를 취소할까요? 만들던 파일은 지워집니다.')) return;
+  $('#cancel').disabled = true;
+  $('#pstage').textContent = '취소하는 중…';
+  try { await fetch(`/api/jobs/${job.id}/cancel`, { method: 'POST' }); } catch {}
+};
+
+function canceled() {
+  $('#go').disabled = false;
+  $('#cancel').disabled = false;
+  $('#cancelRow').classList.add('hide');
+  $('#pbar').style.width = '0%';
+  $('#pstage').textContent = '취소되었습니다';
+  $('#ppct').textContent = '';
+}
 
 // ---------------- 지난 작업 ----------------
 // 결과 화면은 새로고침하면 사라지고, 서버를 다시 켜면 작업 기억도 없어진다.
@@ -592,6 +632,7 @@ async function reattach() {
       W = job.info.w; H = job.info.h; N = job.info.n;
       $('#c-run').classList.remove('hide');
       $('#prog').classList.remove('hide');
+      $('#cancelRow').classList.remove('hide');
       $('#pstage').textContent = '진행 중인 작업에 다시 연결했습니다';
       listen();
       return;
@@ -609,21 +650,29 @@ async function reattach() {
 
 async function loadHist() {
   try {
-    const d = await (await fetch('/api/jobs', { cache: 'no-store' })).json();
-    const done = (d.jobs || []).filter(j => j.out);
-    if (!done.length) { $('#hist').textContent = '아직 완료된 작업이 없습니다.'; return; }
-    $('#hist').innerHTML = done.map(j => {
-      const mb = (j.out_size / 1048576).toFixed(1);
-      const t = j.mtime ? new Date(j.mtime * 1000).toLocaleString('ko-KR') : '';
-      const name = j.name.length > 46 ? j.name.slice(0, 44) + '…' : j.name;
+    const d = await (await fetch('/api/outputs', { cache: 'no-store' })).json();
+    $('#cleaninfo').textContent = '저장 위치: ' + d.dir;
+    if (!d.outputs || !d.outputs.length) {
+      $('#hist').textContent = '아직 완료된 작업이 없습니다.'; return;
+    }
+    $('#hist').innerHTML = d.outputs.map(o => {
+      const mb = (o.size / 1048576).toFixed(1);
+      const t = new Date(o.mtime * 1000).toLocaleString('ko-KR');
+      const nm = o.name.length > 44 ? o.name.slice(0, 42) + '…' : o.name;
+      const e = encodeURIComponent(o.name);
       return `<div class="row" style="padding:7px 0;border-top:1px solid var(--line)">
-        <span style="flex:1;min-width:200px" title="${j.name}">${name}</span>
+        <span style="flex:1;min-width:200px" title="${o.name}">${nm}</span>
         <span>${mb} MB</span><span>${t}</span>
-        <a href="/api/jobs/${j.id}/result" download><button class="primary">받기</button></a>
+        <a href="/api/outputs/${e}" download><button class="primary">받기</button></a>
+        <button onclick="revealOut('${e}')">폴더</button>
       </div>`;
     }).join('');
   } catch { $('#hist').textContent = '목록을 불러오지 못했습니다.'; }
 }
+async function revealOut(e) {
+  try { await fetch(`/api/outputs/${e}/reveal`, { method: 'POST' }); } catch {}
+}
+
 loadHist();
 reattach();
 $('#play').onclick = () => {
