@@ -94,10 +94,37 @@ ffmpeg는 PATH에 있어야 한다.
 | 역할 | 기술 |
 |---|---|
 | 자막 감지 | rapidocr-onnxruntime (DBNet, CPU) |
-| 영상 인페인팅 | STTN — ONNX 또는 PyTorch |
-| 실행 백엔드 | onnxruntime: CUDA / DirectML / CPU 자동 선택 |
+| **영상** 인페인팅 | STTN — ONNX (CUDA / DirectML / CPU 자동 선택) |
+| **사진** 인페인팅 | LaMa — TorchScript (CPU) |
 | 디먹스·리먹스 | ffmpeg (원본 오디오 무손실 복사) |
 | UI | FastAPI + 바닐라 HTML (빌드 단계 없음) |
+
+## 영상과 사진에 다른 모델을 쓰는 이유
+
+STTN 은 **여러 프레임의 배경을 참조해** 채우는 영상 모델이다. 사진 한 장에는
+참조할 다른 프레임이 없어 주변 픽셀만으로 추론하게 된다. 사진은 이미지 전용인
+LaMa 가 맞다. 입력이 단일 프레임이면 자동으로 LaMa 로 간다.
+
+측정 (합성 사진, 얼룩 4개, 정답 대비 PSNR):
+
+| 배경 | 처리 전 | STTN | LaMa |
+|---|---|---|---|
+| 매끈한 피부톤 | 15.01 | **42.55** | 40.34 |
+| 질감 있는 무늬 | 17.81 | 20.13 | **23.84** |
+
+**"이미지는 무조건 LaMa" 가 아니다.** 배경이 매끈하면 STTN 이 오히려 낫다.
+실제 사진은 질감이 있는 쪽에 가까워 기본값만 LaMa 로 둔다.
+
+### LaMa 는 ONNX 로 못 내보낸다
+
+- FFC(푸리에 합성곱)가 `aten::fft_rfftn` 을 쓰는데 ONNX 익스포터가 opset 17 에서
+  지원하지 않는다.
+- 배포 가중치가 TorchScript 라 dynamo 익스포터도 `ScriptModule is not supported`
+  로 막힌다.
+
+그래서 사진 경로만 torch 를 쓴다. CUDA 판은 2.8GB 라 배포판에 넣을 수 없지만
+CPU 판이면 사진 한 장에 몇 초라 충분하다. 영상은 그대로 ONNX(GPU) 다.
+torch 가 없으면 사진도 STTN 으로 떨어진다.
 
 ```
 hse/common.py       백엔드 무관 공통부 (torch를 import하지 않는다)
@@ -223,7 +250,8 @@ t가 동적이라 설정마다 그래프를 따로 실을 필요도 없다.
 ## 결과물 저장 위치
 
 ```
-~/Videos/하드섭 지우개/<원본이름>_자막제거.mp4
+영상  ~/Videos/하드섭 지우개/<원본이름>_자막제거.mp4
+사진  ~/Pictures/하드섭 지우개/<원본이름>_지움.png
 ```
 
 임시 폴더에 두지 않는다. `%TEMP%` 는 AppData 밑이라 탐색기에서 숨겨져 있고 폴더
