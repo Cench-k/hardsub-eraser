@@ -197,6 +197,83 @@ def detect_pass(path, y0, y1, stride, detector, on_progress=None, quiet=False,
     return per_frame
 
 
+LAMA_MODEL = os.path.join(_ROOT, "models", "big-lama", "big-lama.pt")
+
+
+def _run_image(inp, out, info, user, mask_mode, region, det_stride, det_side_len,
+               mask_pad, feather, device, log, on_progress=None):
+    """사진 한 장 처리. 영상 경로(밴드/memmap/ffmpeg)를 전부 건너뛴다."""
+    w, h = info["w"], info["h"]
+    cap = cv2.VideoCapture(inp)
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        raise RuntimeError(f"이미지를 읽을 수 없습니다: {inp}")
+    frame = to_bgr(frame)
+
+    if on_progress:
+        on_progress("detect", 0, 1, "")
+
+    # 마스크 결정
+    if user is not None and mask_mode == "static":
+        m = user
+        log(f"입력: {w}x{h} 이미지 | 칠한 영역 전체를 지웁니다")
+    else:
+        if user is not None:
+            ys = np.where(user.any(axis=1))[0]
+            y0, y1 = max(0, int(ys[0]) - 4), min(h, int(ys[-1]) + 5)
+        else:
+            y0, y1 = parse_region(region, h)
+        boxes = [(x1, ya + y0, x2, yb + y0) for x1, ya, x2, yb
+                 in TextDetector(limit_side_len=det_side_len).boxes(frame[y0:y1])]
+        if user is not None:
+            boxes = [b for b in boxes if user[max(0, b[1]):b[3], max(0, b[0]):b[2]].any()]
+        if not boxes:
+            raise RuntimeError("지정한 영역에서 지울 대상을 찾지 못했습니다. "
+                               "'칠한 영역 전부 지우기'로 바꿔 보세요.")
+        m = boxes_to_mask(boxes, h, w, pad=mask_pad)
+        log(f"입력: {w}x{h} 이미지 | 감지 {len(boxes)}곳")
+
+    if on_progress:
+        on_progress("paint", 0, 1, "")
+
+    # LaMa 우선. 없으면 STTN 으로 떨어진다(배포판에 torch 가 없을 때).
+    from . import lama
+    if lama.available() and os.path.isfile(LAMA_MODEL):
+        log("모델: LaMa (이미지 전용)")
+        result = lama.LamaInpainter(LAMA_MODEL, device=device)(frame, m, feather=feather)
+    else:
+        log("모델: STTN (LaMa 를 쓸 수 없어 대체)")
+        result = _sttn_single(frame, m, feather)
+
+    if not out.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        out = os.path.splitext(out)[0] + ".png"
+    ok = cv2.imwrite(out, result)
+    if not ok:                       # 한글 경로에서 imwrite 가 실패하는 경우
+        cv2.imencode(os.path.splitext(out)[1], result)[1].tofile(out)
+    if on_progress:
+        on_progress("paint", 1, 1, "")
+    log(f"\n완료 -> {out}")
+    return out
+
+
+def _sttn_single(frame, m, feather):
+    """LaMa 를 못 쓸 때의 대체 경로. 사진을 1프레임 영상처럼 STTN 에 넣는다."""
+    from .engine_onnx import ONNXEngine
+    h, w = frame.shape[:2]
+    band = band_from_mask(m, w, h)
+    by0, by1 = band[0], band[1]
+    bh = by1 - by0
+    small = cv2.resize(frame[by0:by1], (MODEL_W, MODEL_H), interpolation=cv2.INTER_AREA)
+    smask = cv2.resize(m[by0:by1], (MODEL_W, MODEL_H), interpolation=cv2.INTER_NEAREST)
+    eng = ONNXEngine(group_size=1, n_refs=4)
+    outs = eng.process_group([0], 1, lambda i: small, lambda i: smask,
+                             np.array([int(smask.sum())]))
+    res = frame.copy()
+    res[by0:by1] = composite(frame[by0:by1], m[by0:by1], outs[0], feather=feather)
+    return res
+
+
 def load_user_mask(path, w, h):
     """사용자가 그린 마스크를 영상 해상도의 0/1 배열로 만든다.
 
@@ -333,6 +410,14 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
     user = load_user_mask(mask_path, w, h) if mask_path else None
     if user is not None and not user.any():
         raise RuntimeError("마스크가 비어 있습니다. 지울 영역을 칠해 주세요.")
+
+    # ---- 사진 한 장이면 LaMa 로 간다 ------------------------------------
+    # STTN 은 여러 프레임의 배경을 참조해 채우는 영상 모델이라 사진에는 참조할 게
+    # 없다. LaMa 는 이미지 전용이라 질감이 있는 배경에서 확실히 낫다.
+    # 밴드 크롭도 memmap 도 ffmpeg 도 필요 없으므로 경로를 따로 둔다.
+    if info.get("n", 0) <= 1:
+        return _run_image(inp, out, info, user, mask_mode, region, det_stride,
+                          det_side_len, mask_pad, feather, device, log, on_progress)
 
     # ---- 처리 밴드와 프레임별 마스크 결정 ----
     if user is not None and mask_mode == "static":
