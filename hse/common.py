@@ -12,6 +12,27 @@ import numpy as np
 MODEL_W, MODEL_H = 432, 240
 
 
+def to_bgr(fr):
+    """프레임을 항상 3채널 BGR 로 맞춘다.
+
+    cv2.VideoCapture 는 대개 BGR 을 주지만 항상은 아니다. 알파가 있는 PNG 를
+    열면 (H,W,4) 를 돌려주고(사진을 1프레임 영상으로 읽을 때 실제로 그렇다),
+    알파 트랙이 있는 코덱도 마찬가지다. 그대로 두면 3채널 버퍼에 쓰는 순간
+    'could not broadcast input array from shape (240,432,4) into shape (240,432,3)'
+    로 터진다. 흑백 프레임도 여기서 흡수한다.
+    """
+    if fr is None:
+        return None
+    if fr.ndim == 2:
+        return cv2.cvtColor(fr, cv2.COLOR_GRAY2BGR)
+    c = fr.shape[2]
+    if c == 4:
+        return cv2.cvtColor(fr, cv2.COLOR_BGRA2BGR)
+    if c == 1:
+        return cv2.cvtColor(fr, cv2.COLOR_GRAY2BGR)
+    return fr
+
+
 def pick_refs(center, total, n_refs, span, mask_area, exclude):
     """참조 프레임 선택.
 

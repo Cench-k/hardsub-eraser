@@ -24,6 +24,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from .common import to_bgr
 from .detect import TextDetector
 from .pipeline import probe
 
@@ -322,6 +323,7 @@ def frame(jid: str, n: int = 0, w: int = 720):
     cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, n))
     ok, fr = cap.read()
     cap.release()
+    fr = to_bgr(fr)
     if not ok:
         raise HTTPException(400, "프레임을 읽을 수 없습니다")
     if w and fr.shape[1] > w:
@@ -357,7 +359,7 @@ def scan(jid: str, samples: int = 24, static_ratio: float = 0.6):
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ok, fr = cap.read()
         if ok:
-            shots.append((idx, det.boxes(fr)))
+            shots.append((idx, det.boxes(to_bgr(fr))))
     cap.release()
 
     # 격자 양자화로는 감지 지터를 못 넘는다(1080p에서 1% = 11px). IoU로 묶는다.

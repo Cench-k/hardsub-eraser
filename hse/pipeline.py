@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from .common import MODEL_H, MODEL_W, composite
+from .common import MODEL_H, MODEL_W, composite, to_bgr
 from .detect import TextDetector, boxes_to_mask
 
 # 모델 경로는 반드시 절대 경로로 잡는다. 상대 경로로 두면 작업 디렉터리가
@@ -72,11 +72,19 @@ def probe(path):
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise RuntimeError(f"영상을 열 수 없습니다: {path}")
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # `or 25.0` 로는 부족하다. 이미지를 열면 fps 가 -1 로 나오는데 -1 은 참이라
+    # 그대로 통과해서 ffmpeg 에 `-r -1.0` 이 넘어가고 인코더가 죽는다.
+    # 메타데이터가 깨진 영상에서도 같은 일이 난다.
+    if not fps or fps <= 0 or fps > 1000:
+        fps = 25.0
     info = dict(
         w=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
         h=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        fps=cap.get(cv2.CAP_PROP_FPS) or 25.0,
-        n=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+        fps=fps,
+        n=max(1, n),
+        is_image=(n <= 1),
     )
     cap.release()
 
@@ -165,6 +173,7 @@ def detect_pass(path, y0, y1, stride, detector, on_progress=None, quiet=False,
             ok, fr = cap.read()
             if not ok:
                 break
+            fr = to_bgr(fr)
             if i % stride == 0:
                 sampled[i] = [(x1, ya + y0, x2, yb + y0)
                               for x1, ya, x2, yb in detector.boxes(fr[y0:y1])]
@@ -244,6 +253,7 @@ def cache_pass(path, by0, by1, n, work_dir, on_progress=None, quiet=False,
             ok, fr = cap.read()
             if not ok:
                 break
+            fr = to_bgr(fr)
             mm[i] = cv2.resize(fr[by0:by1], (MODEL_W, MODEL_H), interpolation=cv2.INTER_AREA)
             i += 1
             p.update()
@@ -406,7 +416,12 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
     engine = make_engine(backend, model, onnx_dir, device, group_size, n_refs,
                          ref_span, cache_size, log=log)
     group_size = engine.group_size
-    writer = FFmpegWriter(out, w, h, fps, audio_from=inp, crf=crf)
+
+    # 사진 한 장을 넣으면 사진이 나와야 한다. mp4 로 감싸면 쓸 수가 없다.
+    single = info.get("is_image") or n <= 1
+    writer = None if single else FFmpegWriter(out, w, h, fps, audio_from=inp, crf=crf)
+    if single and not out.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        out = os.path.splitext(out)[0] + ".png"
     cap = cv2.VideoCapture(inp)
 
     t1 = time.time()
@@ -422,7 +437,10 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
                 f[by0:by1] = composite(f[by0:by1], full_mask(i), o, feather=feather)
             n_painted += len(buf)
         for f in buf:
-            writer.write(f)
+            if writer:
+                writer.write(f)
+            else:
+                cv2.imwrite(out, f)      # 사진 한 장
         buf, idxs = [], []
 
     with Progress("paint", n, "3/3 인페인팅", on_progress, quiet,
@@ -431,7 +449,7 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
             ok, fr = cap.read()
             if not ok:
                 break
-            buf.append(fr)
+            buf.append(to_bgr(fr))
             idxs.append(i)
             p.update(detail=f"{i+1}/{n} 프레임")
             if len(buf) >= group_size:
@@ -439,7 +457,7 @@ def run(inp, out, region="0.70,1.0", det_stride=1, device="auto", group_size=Non
         flush()
 
     cap.release()
-    rc = writer.close()
+    rc = writer.close() if writer else 0
     dt = time.time() - t1
 
     del mm
