@@ -11,6 +11,15 @@ import subprocess
 import sys
 import tempfile
 
+# 출력이 파일이나 파이프로 넘어가면 파이썬은 콘솔 코드페이지가 아니라 로케일
+# 인코딩(한국어 Windows 는 cp949)을 쓴다. 그러면 em dash 같은 문자에서
+# UnicodeEncodeError 가 나 검증이 통과했는데도 빌드가 실패로 끝난다.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 fails = []
 
