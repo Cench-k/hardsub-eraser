@@ -480,39 +480,68 @@ $('#go').onclick = async () => {
   $('#errbox').classList.add('hide');
   $('#pstage').textContent = '마스크 전송 중…';
 
-  const png = cv.toDataURL('image/png');
-  const mr = await fetch(`/api/jobs/${job.id}/mask`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ png })
-  });
-  if (!mr.ok) { fail('마스크 전송 실패: ' + (await mr.text())); return; }
+  // try/catch 없이 두면 fetch 가 거부될 때 화면이 '전송 중…' 에서 영원히 멈춘다.
+  try {
+    const png = cv.toDataURL('image/png');
+    const mr = await fetch(`/api/jobs/${job.id}/mask`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ png })
+    });
+    if (!mr.ok) return fail('마스크 전송 실패: ' + (await mr.text()));
 
-  const [n_refs, group_size] = PRESET[$('#preset').value];
-  const r = await fetch(`/api/jobs/${job.id}/run`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      use_mask: true, mask_mode: $('#mode').value,
-      n_refs, group_size,
-      feather: +$('#feather').value, crf: +$('#crf').value,
-      det_stride: +$('#stride').value
-    })
-  });
-  if (!r.ok) { fail(await r.text()); return; }
-  listen();
+    $('#pstage').textContent = '작업 시작 중…';
+    const [n_refs, group_size] = PRESET[$('#preset').value];
+    const r = await fetch(`/api/jobs/${job.id}/run`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        use_mask: true, mask_mode: $('#mode').value,
+        n_refs, group_size,
+        feather: +$('#feather').value, crf: +$('#crf').value,
+        det_stride: +$('#stride').value
+      })
+    });
+    if (!r.ok) return fail(await r.text());
+    listen();
+  } catch (e) {
+    fail('요청 실패: ' + e + ' — 서버가 꺼졌는지 헤더 표시등을 확인하세요');
+  }
 };
 
 const STAGE = { detect: '자막 감지', cache: '밴드 캐시', paint: '인페인팅' };
+
+function render(j) {
+  $('#pbar').style.width = (j.progress * 100).toFixed(1) + '%';
+  $('#pstage').textContent = (STAGE[j.stage] || j.stage || '') + (j.detail ? ' · ' + j.detail : '');
+  $('#ppct').textContent = (j.progress * 100).toFixed(0) + '%';
+}
+
+// SSE 로 받되, 폴링을 항상 같이 돌린다.
+// 스트림이 조용히 죽으면 작업은 멀쩡히 도는데 화면만 멈춰 보인다. 실제로 그랬다.
 function listen() {
+  let finished = false;
+  const finish = j => {
+    if (finished) return;
+    finished = true;
+    clearInterval(poll);
+    try { es.close(); } catch {}
+    if (j.status === 'done') done(); else fail(j.error || '알 수 없는 오류');
+  };
+
   const es = new EventSource(`/api/jobs/${job.id}/stream`);
   es.onmessage = e => {
     const j = JSON.parse(e.data);
-    $('#pbar').style.width = (j.progress * 100).toFixed(1) + '%';
-    $('#pstage').textContent = (STAGE[j.stage] || j.stage || '') + (j.detail ? ' · ' + j.detail : '');
-    $('#ppct').textContent = (j.progress * 100).toFixed(0) + '%';
-    if (j.status === 'done') { es.close(); done(); }
-    if (j.status === 'error') { es.close(); fail(j.error); }
+    render(j);
+    if (j.status === 'done' || j.status === 'error') finish(j);
   };
-  es.onerror = () => es.close();
+  es.onerror = () => { try { es.close(); } catch {} };
+
+  const poll = setInterval(async () => {
+    try {
+      const j = await (await fetch(`/api/jobs/${job.id}`, { cache: 'no-store' })).json();
+      render(j);
+      if (j.status === 'done' || j.status === 'error') finish(j);
+    } catch {}
+  }, 2000);
 }
 function fail(msg) {
   $('#go').disabled = false;

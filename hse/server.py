@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -46,15 +46,36 @@ class Job:
     _subs: list = field(default_factory=list, repr=False)
 
     def public(self):
-        d = {k: v for k, v in asdict(self).items() if not k.startswith("_")}
-        d["out"] = bool(self.out)
-        d["mask"] = bool(self.mask)
-        return d
+        """UI로 내보낼 필드만 직접 만든다.
+
+        dataclasses.asdict() 를 쓰면 안 된다. 그건 필터링 전에 모든 필드를 깊은
+        복사하는데, _subs 에 들어있는 queue.Queue 는 스레드 락을 품고 있어
+        deepcopy 가 TypeError: cannot pickle '_thread.lock' 로 터진다.
+        구독자가 없을 때만 우연히 동작해서, 브라우저가 SSE 에 연결하는 순간
+        진행률 전송이 통째로 죽었다.
+        """
+        return {
+            "id": self.id,
+            "src": self.src,
+            "info": self.info,
+            "status": self.status,
+            "stage": self.stage,
+            "progress": self.progress,
+            "detail": self.detail,
+            "error": self.error,
+            "out": bool(self.out),
+            "mask": bool(self.mask),
+        }
 
     def emit(self, **kw):
         for k, v in kw.items():
             setattr(self, k, v)
-        payload = json.dumps(self.public(), ensure_ascii=False)
+        # 상태 알림이 실패해도 작업 자체는 계속 가야 한다. 여기서 예외가 나가면
+        # 워커 스레드가 죽어 멀쩡한 작업이 통째로 실패한다.
+        try:
+            payload = json.dumps(self.public(), ensure_ascii=False)
+        except Exception:  # noqa: BLE001
+            return
         for q in list(self._subs):
             try:
                 q.put_nowait(payload)
