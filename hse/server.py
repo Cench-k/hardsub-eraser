@@ -18,9 +18,8 @@ from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .detect import TextDetector
@@ -127,9 +126,38 @@ def detector():
     return _detector
 
 
+HOST, PORT = "127.0.0.1", 8756
+ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}", f"[::1]:{PORT}"}
+ALLOWED_ORIGINS = {f"http://{h}" for h in ALLOWED_HOSTS}
+
 app = FastAPI(title="hardsub_eraser")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
-                   allow_headers=["*"])
+
+
+@app.middleware("http")
+async def local_only(request: Request, call_next):
+    """브라우저를 통한 외부 접근을 막는다.
+
+    로컬 주소로만 listen 한다고 안전하지 않다. 사용자가 아무 웹사이트나
+    열어두면 그 페이지의 스크립트가 127.0.0.1 로 요청을 보낼 수 있다.
+    전에는 CORS 가 allow_origins=["*"] 라 응답까지 읽혔고, /api/jobs 는
+    로컬 임의 경로를 받으므로 이 PC의 영상을 지목해 /source 로 빼갈 수 있었다.
+
+      Host 검사  — DNS 리바인딩 방어. 공격자 도메인이 127.0.0.1 로 풀려도
+                   Host 헤더는 그 도메인이라 걸러진다.
+      Origin 검사 — 다른 출처에서 온 요청 자체를 거부한다. 프리플라이트가
+                   없는 단순 요청(form POST)도 여기서 막힌다.
+
+    같은 출처에서만 쓰므로 CORS 미들웨어는 아예 두지 않는다.
+    """
+    host = (request.headers.get("host") or "").lower()
+    if host not in ALLOWED_HOSTS:
+        return JSONResponse({"detail": f"허용되지 않은 host: {host}"}, status_code=400)
+
+    origin = request.headers.get("origin")
+    if origin and origin.lower() not in ALLOWED_ORIGINS:
+        return JSONResponse({"detail": "외부 출처에서의 요청은 차단됩니다"},
+                            status_code=403)
+    return await call_next(request)
 
 
 def _optint(v):
