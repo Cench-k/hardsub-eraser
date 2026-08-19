@@ -664,7 +664,7 @@ async function reattach() {
 async function loadHist() {
   try {
     const d = await (await fetch('/api/outputs', { cache: 'no-store' })).json();
-    $('#cleaninfo').textContent = '저장 위치: ' + d.dir;
+    $('#cleaninfo').textContent = `저장 위치: ${d.dir} · 사진은 ${d.dir_image}`;
     if (!d.outputs || !d.outputs.length) {
       $('#hist').textContent = '아직 완료된 작업이 없습니다.'; return;
     }
@@ -674,7 +674,7 @@ async function loadHist() {
       const nm = o.name.length > 44 ? o.name.slice(0, 42) + '…' : o.name;
       const e = encodeURIComponent(o.name);
       return `<div class="row" style="padding:7px 0;border-top:1px solid var(--line)">
-        <span style="flex:1;min-width:200px" title="${o.name}">${nm}</span>
+        <span style="flex:1;min-width:200px" title="${o.name}"><span class="tag">${o.kind === 'image' ? '사진' : '영상'}</span> ${nm}</span>
         <span>${mb} MB</span><span>${t}</span>
         <a href="/api/outputs/${e}" download><button class="primary">받기</button></a>
         <button onclick="revealOut('${e}')">폴더</button>

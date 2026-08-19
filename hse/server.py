@@ -36,7 +36,10 @@ os.makedirs(WORK, exist_ok=True)
 # 있고 Windows 디스크 정리가 언제든 비운다. 실제로 결과물을 못 찾는 일이 있었다.
 # 작업 폴더에는 업로드 원본과 마스크만 남고, 완성본은 여기로 간다.
 OUT_DIR = os.path.join(os.path.expanduser("~"), "Videos", "하드섭 지우개")
-os.makedirs(OUT_DIR, exist_ok=True)
+OUT_DIR_IMG = os.path.join(os.path.expanduser("~"), "Pictures", "하드섭 지우개")
+for _d in (OUT_DIR, OUT_DIR_IMG):
+    os.makedirs(_d, exist_ok=True)
+OUT_DIRS = (OUT_DIR, OUT_DIR_IMG)
 
 
 @dataclass
@@ -119,7 +122,9 @@ def restore_jobs():
 
         out = meta.get("out") or os.path.join(d, "output.mp4")   # 예전 버전 호환
         srcs = [f for f in os.listdir(d)
-                if f.lower().endswith((".mp4", ".mkv", ".mov", ".avi")) and f != "output.mp4"]
+                if f.lower().endswith((".mp4", ".mkv", ".mov", ".avi",
+                                       ".png", ".jpg", ".jpeg", ".webp"))
+                and f not in ("output.mp4", "mask.png")]
         src = meta.get("src") or (os.path.join(d, srcs[0]) if srcs else out)
         if not os.path.isfile(src):
             src = out
@@ -147,6 +152,17 @@ def save_meta(j: Job):
             json.dump({"src": j.src, "out": j.out}, f, ensure_ascii=False)
     except OSError:
         pass
+
+
+MIME = {".mp4": "video/mp4", ".mkv": "video/x-matroska", ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo", ".png": "image/png", ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def mime_of(path):
+    """확장자로 실제 형식을 정한다. 사진을 video/mp4 로 내보내면 브라우저가
+    재생하려 들고 저장 이름도 어긋난다."""
+    return MIME.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
 
 
 def unique_path(path):
@@ -249,11 +265,12 @@ async def create_job(file: UploadFile = File(None), path: str = Form(None)):
 
 
 def _safe_out(name):
-    """OUT_DIR 안의 파일만 허용. 경로 탈출을 막는다."""
-    p = os.path.normpath(os.path.join(OUT_DIR, os.path.basename(name)))
-    if os.path.dirname(p) != os.path.normpath(OUT_DIR) or not os.path.isfile(p):
-        raise HTTPException(404, "파일이 없습니다")
-    return p
+    """결과물 폴더 안의 파일만 허용. 경로 탈출을 막는다."""
+    for d in OUT_DIRS:
+        p = os.path.normpath(os.path.join(d, os.path.basename(name)))
+        if os.path.dirname(p) == os.path.normpath(d) and os.path.isfile(p):
+            return p
+    raise HTTPException(404, "파일이 없습니다")
 
 
 @app.get("/api/outputs")
@@ -264,21 +281,25 @@ def list_outputs():
     실제로 그랬다. 완성본은 별도 폴더에 영구 보관되므로 그쪽이 진실이다.
     """
     rows = []
-    if os.path.isdir(OUT_DIR):
-        for f in os.listdir(OUT_DIR):
-            p = os.path.join(OUT_DIR, f)
-            if os.path.isfile(p) and f.lower().endswith((".mp4", ".mkv", ".mov")):
+    for d in OUT_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            p = os.path.join(d, f)
+            if os.path.isfile(p) and f.lower().endswith(
+                    (".mp4", ".mkv", ".mov", ".png", ".jpg", ".jpeg", ".webp")):
                 st = os.stat(p)
                 rows.append({"name": f, "size": st.st_size, "mtime": st.st_mtime,
-                             "path": p})
+                             "path": p, "kind": "image" if f.lower().endswith(
+                                 (".png", ".jpg", ".jpeg", ".webp")) else "video"})
     rows.sort(key=lambda r: r["mtime"], reverse=True)
-    return {"dir": OUT_DIR, "outputs": rows}
+    return {"dir": OUT_DIR, "dir_image": OUT_DIR_IMG, "outputs": rows}
 
 
 @app.get("/api/outputs/{name}")
 def get_output(name: str):
     p = _safe_out(name)
-    return FileResponse(p, media_type="video/mp4", filename=os.path.basename(p))
+    return FileResponse(p, media_type=mime_of(p), filename=os.path.basename(p))
 
 
 @app.post("/api/outputs/{name}/reveal")
@@ -427,9 +448,14 @@ def start(jid: str, params: dict):
     if busy:
         raise HTTPException(409, f"이미 다른 작업이 처리 중입니다 ({busy[0].id})")
 
+    # 사진과 영상은 저장 위치도 이름도 다르다. 사진을 '내 비디오'에 '_자막제거'
+    # 로 넣으면 얼룩 지우려던 사람에겐 둘 다 어긋난다.
     name = os.path.splitext(os.path.basename(j.src))[0]
-    out = unique_path(os.path.join(OUT_DIR, f"{name}_자막제거.mp4"))
-    os.makedirs(OUT_DIR, exist_ok=True)
+    is_img = bool(j.info.get("is_image"))
+    d = OUT_DIR_IMG if is_img else OUT_DIR
+    os.makedirs(d, exist_ok=True)
+    out = unique_path(os.path.join(
+        d, f"{name}_지움.png" if is_img else f"{name}_자막제거.mp4"))
     j._abort.clear()
 
     def worker():
@@ -440,7 +466,7 @@ def start(jid: str, params: dict):
             def on_progress(stage, done, total, detail=""):
                 j.emit(stage=stage, progress=(done / total if total else 0.0), detail=detail)
 
-            run(j.src, out,
+            _res = run(j.src, out,
                 mask_path=j.mask if params.get("use_mask") else None,
                 mask_mode=params.get("mask_mode", "detect"),
                 region=params.get("region", "0.70,1.0"),
@@ -457,9 +483,12 @@ def start(jid: str, params: dict):
                 on_progress=on_progress,
                 should_abort=j._abort.is_set,
                 quiet=True)
-            j.out = out
+            # run() 이 실제로 저장한 경로를 돌려준다. 사진이면 확장자를 .png 로
+            # 바꿔서 저장하므로, 여기서 out 을 그대로 믿으면 없는 파일을 가리켜
+            # 다운로드가 '결과가 아직 없습니다' 로 404 가 난다.
+            j.out = _res if (_res and os.path.isfile(_res)) else out
             save_meta(j)
-            j.emit(status="done", stage="", progress=1.0, out=out, detail="")
+            j.emit(status="done", stage="", progress=1.0, out=j.out, detail="")
         except Aborted:
             for p in (out,):                       # 중간까지 쓰인 파일은 지운다
                 if os.path.isfile(p):
@@ -610,7 +639,7 @@ def reveal(jid: str):
 def source(jid: str):
     """원본 영상. 비포/애프터 비교에서 왼쪽에 쓴다."""
     j = _job(jid)
-    return FileResponse(j.src, media_type="video/mp4")
+    return FileResponse(j.src, media_type=mime_of(j.src))
 
 
 @app.get("/api/jobs/{jid}/result")
@@ -618,8 +647,10 @@ def result(jid: str):
     j = _job(jid)
     if not j.out or not os.path.isfile(j.out):
         raise HTTPException(404, "결과가 아직 없습니다")
-    return FileResponse(j.out, media_type="video/mp4",
-                        filename=os.path.splitext(os.path.basename(j.src))[0] + "_clean.mp4")
+    # 저장된 파일 이름을 그대로 쓴다. '_clean.mp4' 로 고정해 두면 사진을 받아도
+    # mp4 이름이 붙어 열리지 않는다.
+    return FileResponse(j.out, media_type=mime_of(j.out),
+                        filename=os.path.basename(j.out))
 
 
 @app.get("/api/backends")
