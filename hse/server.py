@@ -549,34 +549,46 @@ def cancel(jid: str):
 
 
 @app.post("/api/cleanup")
-def cleanup():
+def cleanup(payload: dict | None = None):
     """작업 폴더의 임시 파일을 지운다.
 
     완성본은 OUT_DIR 에 따로 저장되므로 여기서 지워도 결과물은 남는다.
     지우는 것: 업로드된 원본 사본, 마스크, 밴드 캐시.
+
+    `keep` 으로 지금 UI 가 열어둔 작업을 받아 제외한다. 이게 없으면 방금 올린
+    영상까지 지워버려서, 바로 이어서 처리를 누르면 'job not found' 가 난다.
     """
-    freed, removed = 0, 0
-    for jid in list(JOBS):
-        if JOBS[jid].status == "running":
-            continue
-    for name in os.listdir(WORK):
+    keep = set()
+    if payload:
+        k = payload.get("keep")
+        if k:
+            keep.add(k)
+
+    freed, removed, skipped = 0, 0, []
+    for name in sorted(os.listdir(WORK)):
         d = os.path.join(WORK, name)
         if not os.path.isdir(d):
             continue
         j = JOBS.get(name)
+        if name in keep:
+            skipped.append(f"{name}: 지금 편집 중")
+            continue
         if j and j.status == "running":
+            skipped.append(f"{name}: 처리 중")
             continue
         size = sum(os.path.getsize(os.path.join(dp, f))
                    for dp, _, fs in os.walk(d) for f in fs)
         try:
             shutil.rmtree(d)
-        except OSError:
+        except OSError as e:
+            # 조용히 건너뛰면 "정리했다는데 그대로네" 가 된다. 이유를 돌려준다.
+            skipped.append(f"{name}: 사용 중 ({e.strerror or e})")
             continue
         freed += size
         removed += 1
-        if j:
-            JOBS.pop(name, None)
-    return {"ok": True, "removed": removed, "freed_mb": round(freed / 1048576, 1)}
+        JOBS.pop(name, None)
+    return {"ok": True, "removed": removed, "freed_mb": round(freed / 1048576, 1),
+            "skipped": skipped}
 
 
 @app.post("/api/jobs/{jid}/reveal")

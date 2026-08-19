@@ -101,10 +101,12 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
 <main>
   <section class="card" id="c-open">
     <h2>1 · 영상 열기</h2>
-    <div id="drop">영상을 여기로 끌어다 놓거나 클릭해서 선택하세요
-      <div class="mono" style="margin-top:8px">mp4 · mkv · mov · avi</div>
+    <div id="drop">영상이나 사진을 여기로 끌어다 놓거나 클릭해서 선택하세요
+      <div class="mono" style="margin-top:8px">
+        영상 mp4 · mkv · mov · avi &nbsp;|&nbsp; 사진 png · jpg · webp</div>
     </div>
-    <input type="file" id="file" accept="video/*" class="hide">
+    <!-- accept 에 image 가 빠져 있으면 파일 선택기에서 사진을 아예 고를 수 없다 -->
+    <input type="file" id="file" accept="video/*,image/*" class="hide">
     <div class="mono" id="meta" style="margin-top:10px"></div>
   </section>
 
@@ -167,7 +169,7 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
       <span class="mono" id="modehint" style="max-width:460px"></span>
     </div>
     <div class="row" style="gap:16px">
-      <label>품질
+      <label class="video-only">품질
         <select id="preset">
           <option value="auto" selected>자동 (이 PC에 맞춤)</option>
           <option value="fast">빠르게</option>
@@ -176,8 +178,8 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
         </select>
       </label>
       <label>경계 부드럽게<input type="number" id="feather" value="4" min="0" max="12"></label>
-      <label>출력 화질 CRF<input type="number" id="crf" value="18" min="12" max="30"></label>
-      <label>감지 간격
+      <label class="video-only">출력 화질 CRF<input type="number" id="crf" value="18" min="12" max="30"></label>
+      <label class="video-only">감지 간격
         <select id="stride">
           <option value="1">1 — 전 프레임 (가장 정확)</option>
           <option value="3" selected>3 — 권장</option>
@@ -185,7 +187,7 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
           <option value="10">10 — 가장 빠름</option>
         </select>
       </label>
-      <span class="mono" id="crfhint" style="max-width:330px"></span>
+      <span class="mono video-only" id="crfhint" style="max-width:330px"></span>
       <button class="primary" id="go" style="margin-left:auto">처리 시작</button>
     </div>
     <div id="prog" class="hide" style="margin-top:16px">
@@ -311,19 +313,30 @@ async function upload(f) {
   if (!r.ok) { drop.textContent = '열기 실패: ' + (await r.text()); return; }
   job = await r.json();
   W = job.info.w; H = job.info.h; N = job.info.n;
-  const mb = job.info.size / 1048576, mbps = job.info.bitrate / 1e6;
-  const secs = job.info.duration;
-  const dur = secs >= 60 ? `${Math.floor(secs/60)}분 ${Math.round(secs%60)}초` : `${secs.toFixed(1)}초`;
-  $('#meta').textContent =
-    `${W}×${H} · ${job.info.fps.toFixed(2)}fps · ${dur} · ${mb.toFixed(1)}MB · ${mbps.toFixed(2)} Mbps (${job.info.quality})`;
+  const mb = job.info.size / 1048576;
+  const isImg = !!job.info.is_image;
   drop.textContent = f.name;
 
-  // 원본이 이미 강하게 압축돼 있으면 CRF를 낮게 줘도 없는 화질이 생기지 않고
-  // 용량만 몇 배로 커진다. 원본 압축 정도에 맞춰 기본값을 잡아준다.
-  $('#crf').value = job.info.crf;
-  $('#crfhint').textContent =
-    `원본이 ${mbps.toFixed(2)} Mbps 라 CRF ${job.info.crf} 을 잡았습니다. ` +
-    `낮출수록 고화질·큰 파일 (12~30)`;
+  // 사진과 영상은 보여줄 정보도 쓸 수 있는 설정도 다르다.
+  document.querySelectorAll('.video-only').forEach(e => e.classList.toggle('hide', isImg));
+  $('#seek').classList.toggle('hide', isImg);
+
+  if (isImg) {
+    $('#meta').textContent = `사진 ${W}×${H} · ${mb.toFixed(1)}MB — LaMa(이미지 전용 모델)로 처리합니다`;
+    $('#pos').textContent = '';
+  } else {
+    const mbps = job.info.bitrate / 1e6, secs = job.info.duration;
+    const dur = secs >= 60 ? `${Math.floor(secs/60)}분 ${Math.round(secs%60)}초`
+                           : `${secs.toFixed(1)}초`;
+    $('#meta').textContent =
+      `${W}×${H} · ${job.info.fps.toFixed(2)}fps · ${dur} · ${mb.toFixed(1)}MB · ${mbps.toFixed(2)} Mbps (${job.info.quality})`;
+    // 원본이 이미 강하게 압축돼 있으면 CRF를 낮게 줘도 없는 화질이 생기지 않고
+    // 용량만 몇 배로 커진다. 원본 압축 정도에 맞춰 기본값을 잡아준다.
+    $('#crf').value = job.info.crf;
+    $('#crfhint').textContent =
+      `원본이 ${mbps.toFixed(2)} Mbps 라 CRF ${job.info.crf} 을 잡았습니다. ` +
+      `낮출수록 고화질·큰 파일 (12~30)`;
+  }
   $('#seek').max = Math.max(0, N - 1);
 
   // 캔버스는 영상 해상도 그대로. 화면에는 CSS로 줄여 보여준다.
@@ -679,8 +692,15 @@ $('#clean').onclick = async () => {
   b.disabled = true;
   $('#cleaninfo').textContent = '정리 중…';
   try {
-    const d = await (await fetch('/api/cleanup', { method: 'POST' })).json();
-    $('#cleaninfo').textContent = `${d.removed}개 폴더, ${d.freed_mb} MB 정리했습니다`;
+    // 지금 편집 중인 작업은 빼고 지운다. 안 그러면 방금 올린 영상까지 사라져서
+    // 바로 처리를 누르면 'job not found' 가 난다.
+    const d = await (await fetch('/api/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keep: job ? job.id : null })
+    })).json();
+    let msg = `${d.removed}개 폴더, ${d.freed_mb} MB 정리했습니다`;
+    if (d.skipped && d.skipped.length) msg += ` · 건너뜀 ${d.skipped.length}개 (${d.skipped[0]})`;
+    $('#cleaninfo').textContent = msg;
     loadHist();
   } catch (e) { $('#cleaninfo').textContent = '정리 실패: ' + e; }
   b.disabled = false;
