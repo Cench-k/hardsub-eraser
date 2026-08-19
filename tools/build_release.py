@@ -60,7 +60,7 @@ ORT_PKG = "onnxruntime-directml==1.24.4"
 # 미지원 + 배포 가중치가 TorchScript 라 dynamo 도 불가) 이 경로만 torch 가 필요하다.
 # CUDA 판은 2.8GB 라 넣을 수 없지만 CPU 판은 훨씬 작고, 사진 한 장이면 몇 초면 된다.
 # 영상은 그대로 onnxruntime(GPU) 을 쓴다.
-TORCH_PKG = "torch"
+TORCH_PKG = "torch==2.13.0"
 TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 
 # 한글을 절대 넣지 않는다. cmd.exe는 .bat을 OEM 코드페이지(한국어 Windows는 949)로
@@ -194,6 +194,19 @@ def main():
     # ascii + CRLF. BOM(utf-8-sig)을 붙이면 cmd가 첫 줄을 못 읽는다.
     with open(os.path.join(app, "실행.bat"), "w", encoding="ascii", newline="\r\n") as f:
         f.write(START_BAT)
+
+    # torch 의 빌드용 산출물을 걷어낸다. C++ 확장을 컴파일할 때만 쓰이고 실행에는
+    # 관여하지 않는다. 약 100MB 준다.
+    # torch/testing 은 건드리면 안 된다. torch.nn.functional 이 import 한다.
+    tdir = os.path.join(runtime, "Lib", "site-packages", "torch")
+    shutil.rmtree(os.path.join(tdir, "include"), ignore_errors=True)
+    for dp, _, fs in os.walk(tdir):
+        for f in fs:
+            if f.endswith(".lib"):
+                try:
+                    os.remove(os.path.join(dp, f))
+                except OSError:
+                    pass
 
     # torch 기반 STTN 경로는 배포판에서 쓰지 않는다(영상은 ONNX). hse/lama.py 는
     # torch 를 쓰지만 사진 처리에 필요하므로 남긴다.
