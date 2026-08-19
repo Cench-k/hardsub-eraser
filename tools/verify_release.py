@@ -97,6 +97,26 @@ def c_batfile():
     return " ".join(hits)
 
 
+def c_lama():
+    """사진용 LaMa 가 실제로 도는지. torch(CPU) 와 가중치가 모두 있어야 한다."""
+    sys.path.insert(0, APP)
+    import numpy as np
+
+    from hse import lama
+    if not lama.available():
+        raise RuntimeError("torch 가 없다 — 사진은 STTN 으로 떨어진다")
+    w = os.path.join(APP, "models", "big-lama", "big-lama.pt")
+    if not os.path.isfile(w):
+        raise FileNotFoundError(w)
+    img = np.full((256, 320, 3), 140, np.uint8)
+    m = np.zeros((256, 320), np.uint8)
+    m[100:140, 120:180] = 1
+    out = lama.LamaInpainter(w, device="cpu")(img, m)
+    if out.shape != img.shape:
+        raise RuntimeError(f"출력 shape 불일치 {out.shape}")
+    return f"{out.shape[1]}x{out.shape[0]} 처리"
+
+
 def c_endtoend():
     """자막을 태운 짧은 영상을 만들어 실제로 지워 본다."""
     sys.path.insert(0, APP)
@@ -132,6 +152,7 @@ if __name__ == "__main__":
     check("hse 패키지", c_hse)
     check("ffmpeg / ffprobe", c_ffmpeg)
     check("실행 배치파일", c_batfile)
+    check("LaMa (사진)", c_lama)
     check("전체 파이프라인", c_endtoend)
 
     print()

@@ -6,10 +6,12 @@
   dist/hardsub_eraser/
     runtime/          임베디드 Python + 의존성 + ffmpeg.exe, ffprobe.exe
     hse/  web/        우리 코드
-    models/onnx/      STTN 그래프 3개 (67MB) — 작아서 그냥 동봉한다
+    models/onnx/      STTN 그래프 3개 (67MB)  — 영상용
+    models/big-lama/  LaMa 가중치 (200MB)     — 사진용
     실행.bat
 
-torch는 넣지 않는다. onnxruntime-directml 하나로 NVIDIA/AMD/Intel/CPU를 다 커버한다.
+영상은 onnxruntime-directml 하나로 NVIDIA/AMD/Intel/CPU를 다 커버한다.
+사진은 LaMa 를 쓰는데 ONNX 로 못 내보내서 torch(CPU) 를 함께 넣는다.
 
     python tools/build_release.py
 """
@@ -21,6 +23,15 @@ import subprocess
 import sys
 import urllib.request
 import zipfile
+
+# 출력이 파이프나 파일로 넘어가면 파이썬은 콘솔 코드페이지가 아니라 로케일
+# 인코딩(한국어 Windows 는 cp949)을 쓴다. em dash 하나 때문에 빌드가 통째로
+# 죽는다. verify_release.py 에서 이미 겪었는데 여기도 같은 문제가 있었다.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY_VER = "3.11.9"
@@ -44,6 +55,13 @@ PKGS = [
     "python-multipart",
 ]
 ORT_PKG = "onnxruntime-directml==1.24.4"
+
+# 사진은 LaMa 로 처리한다. LaMa 는 ONNX 로 내보낼 수 없어서(FFC 의 aten::fft_rfftn
+# 미지원 + 배포 가중치가 TorchScript 라 dynamo 도 불가) 이 경로만 torch 가 필요하다.
+# CUDA 판은 2.8GB 라 넣을 수 없지만 CPU 판은 훨씬 작고, 사진 한 장이면 몇 초면 된다.
+# 영상은 그대로 onnxruntime(GPU) 을 쓴다.
+TORCH_PKG = "torch"
+TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 
 # 한글을 절대 넣지 않는다. cmd.exe는 .bat을 OEM 코드페이지(한국어 Windows는 949)로
 # 읽기 때문에 UTF-8 한글이 깨져서 쓰레기 명령으로 실행된다. BOM도 마찬가지로 토한다.
@@ -125,6 +143,11 @@ def main():
     print("[3/6] 의존성 설치 (수백 MB, 시간이 걸립니다)")
     subprocess.run([py, "-m", "pip", "install", "--no-warn-script-location", "-q", *PKGS],
                    check=True)
+
+    print("  torch (CPU) — 사진용 LaMa 에만 쓰인다")
+    subprocess.run([py, "-m", "pip", "install", "--no-warn-script-location", "-q",
+                    "--index-url", TORCH_INDEX, TORCH_PKG], check=True)
+
     # rapidocr가 끌고 온 CPU 전용 onnxruntime을 걷어내고 DirectML판으로 교체한다.
     subprocess.run([py, "-m", "pip", "uninstall", "-y", "-q", "onnxruntime"], check=False)
     subprocess.run([py, "-m", "pip", "install", "--no-warn-script-location", "-q",
@@ -157,13 +180,23 @@ def main():
     os.makedirs(os.path.join(app, "models", "onnx"))
     for p in need:
         shutil.copy2(p, os.path.join(app, "models", "onnx"))
+
+    # 사진용 LaMa 가중치 (TorchScript, 약 200MB)
+    lama = os.path.join(ROOT, "models", "big-lama", "big-lama.pt")
+    if os.path.isfile(lama):
+        os.makedirs(os.path.join(app, "models", "big-lama"), exist_ok=True)
+        shutil.copy2(lama, os.path.join(app, "models", "big-lama"))
+        print(f"  big-lama.pt {os.path.getsize(lama)/1e6:.0f} MB")
+    else:
+        sys.exit("[!] models/big-lama/big-lama.pt 가 없습니다")
     for f in ("LICENSE", "THIRD-PARTY-NOTICES.md", "README.md"):
         shutil.copy2(os.path.join(ROOT, f), app)
     # ascii + CRLF. BOM(utf-8-sig)을 붙이면 cmd가 첫 줄을 못 읽는다.
     with open(os.path.join(app, "실행.bat"), "w", encoding="ascii", newline="\r\n") as f:
         f.write(START_BAT)
 
-    # 배포판에는 torch가 없다. 있으면 import 에러만 나므로 아예 뺀다.
+    # torch 기반 STTN 경로는 배포판에서 쓰지 않는다(영상은 ONNX). hse/lama.py 는
+    # torch 를 쓰지만 사진 처리에 필요하므로 남긴다.
     shutil.rmtree(os.path.join(app, "hse", "sttn"), ignore_errors=True)
     for f in ("engine.py",):
         p = os.path.join(app, "hse", f)
