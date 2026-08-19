@@ -190,6 +190,12 @@ kbd{font:inherit;font-size:11.5px;padding:1px 6px;border:1px solid var(--line);
       </div>
     </div>
     <div class="mono err hide" id="errbox" style="margin-top:10px"></div>
+    <div class="row hide" id="doneRow" style="margin-top:14px">
+      <span class="ok" style="font-weight:600">처리 완료</span>
+      <span class="mono" id="doneInfo"></span>
+      <button class="primary" id="dlNow" style="margin-left:auto">결과 다운로드</button>
+      <button id="toOut">비교해 보기</button>
+    </div>
   </section>
 
   <section class="card hide" id="c-out">
@@ -549,19 +555,58 @@ function fail(msg) {
   $('#errbox').textContent = msg;
   $('#pstage').textContent = '';
 }
-function done() {
+async function done() {
   $('#go').disabled = false;
+  $('#pbar').style.width = '100%';
   $('#pstage').innerHTML = '<span class="ok">완료</span>';
+  $('#ppct').textContent = '100%';
+
+  // 다운로드 버튼을 처리 버튼 바로 아래에 띄운다.
+  // 결과 섹션까지 스크롤해야만 받을 수 있으면 있는 줄도 모른다.
+  $('#doneRow').classList.remove('hide');
+  try {
+    const d = await (await fetch('/api/jobs', { cache: 'no-store' })).json();
+    const me = (d.jobs || []).find(j => j.id === job.id);
+    if (me) $('#doneInfo').textContent = `${(me.out_size / 1048576).toFixed(1)} MB`;
+  } catch {}
+
   $('#c-out').classList.remove('hide');
   $('#vBefore').src = `/api/jobs/${job.id}/source`;
   $('#vAfter').src = `/api/jobs/${job.id}/result`;
-  $('#c-out').scrollIntoView({ behavior: 'smooth' });
   loadHist();
 }
+$('#dlNow').onclick = () => location.href = `/api/jobs/${job.id}/result`;
+$('#toOut').onclick = () => $('#c-out').scrollIntoView({ behavior: 'smooth' });
 
 // ---------------- 지난 작업 ----------------
 // 결과 화면은 새로고침하면 사라지고, 서버를 다시 켜면 작업 기억도 없어진다.
 // 완료된 결과물은 언제든 여기서 다시 받을 수 있어야 한다.
+// 페이지를 새로 열었을 때, 돌고 있거나 방금 끝난 작업을 다시 붙잡는다.
+// 이게 없으면 처리 중에 새로고침한 순간 추적이 끊겨 완료돼도 결과 화면이 안 뜬다.
+async function reattach() {
+  try {
+    const d = await (await fetch('/api/jobs', { cache: 'no-store' })).json();
+    const running = (d.jobs || []).find(j => j.status === 'running');
+    if (running) {
+      job = running;
+      W = job.info.w; H = job.info.h; N = job.info.n;
+      $('#c-run').classList.remove('hide');
+      $('#prog').classList.remove('hide');
+      $('#pstage').textContent = '진행 중인 작업에 다시 연결했습니다';
+      listen();
+      return;
+    }
+    const last = (d.jobs || []).find(j => j.out);
+    if (last) {
+      job = last;
+      W = job.info.w; H = job.info.h; N = job.info.n;
+      $('#c-out').classList.remove('hide');
+      $('#vBefore').src = `/api/jobs/${last.id}/source`;
+      $('#vAfter').src = `/api/jobs/${last.id}/result`;
+    }
+  } catch {}
+}
+
 async function loadHist() {
   try {
     const d = await (await fetch('/api/jobs', { cache: 'no-store' })).json();
@@ -580,6 +625,7 @@ async function loadHist() {
   } catch { $('#hist').textContent = '목록을 불러오지 못했습니다.'; }
 }
 loadHist();
+reattach();
 $('#play').onclick = () => {
   const a = $('#vBefore'), b = $('#vAfter');
   if (a.paused) { b.currentTime = a.currentTime; a.play(); b.play(); }
