@@ -7,7 +7,7 @@
 영상에 박힌 하드코딩 자막을 지우는 로컬 도구. 100% 오프라인, API 키 불필요.
 AniEraser(media.io) 같은 인페인팅 도구를 하드섭 제거에 특화해 만든 것.
 
-> **[포터블 판 내려받기](https://github.com/Cench-k/hardsub-eraser/releases/latest)** (264MB)
+> **[포터블 판 내려받기](https://github.com/Cench-k/hardsub-eraser/releases/latest)** (631MB)
 > — 압축 풀고 `실행.bat`. Python도 ffmpeg도 설치할 필요 없습니다.
 > 경로가 너무 깊으면 Windows 260자 제한에 걸리니 바탕화면이나 `C:\` 근처에 푸세요.
 
@@ -65,7 +65,7 @@ ffmpeg는 PATH에 있어야 한다.
 ```
 
 임베디드 Python + 의존성 + ffmpeg + ONNX 모델을 묶어 `dist/`에 포터블 ZIP을 만든다
-(폴더 594MB, ZIP 263MB). torch는 넣지 않는다.
+(폴더 1387MB, ZIP 631MB). torch는 사진용 CPU 판만 넣는다.
 
 빌드 끝에 `tools/verify_release.py`가 **배포본 자신의 파이썬으로** 자동 실행되어
 의존성·provider·모델·ffmpeg·전체 파이프라인을 확인한다. 실패하면 빌드가 중단된다.
