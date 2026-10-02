@@ -27,13 +27,23 @@ class TextDetector:
     프레임당 719ms가 걸렸다. limit_type='max'로 긴 변을 제한하면 28ms로 떨어진다.
     """
 
-    def __init__(self, limit_side_len=960, limit_type="max"):
+    """box_thresh/unclip_ratio 도 rapidocr 기본값(0.5/1.6)에서 낮추고 넓힌다.
+    DBNet 은 한 줄을 띄어쓰기 단위로 쪼개는데, 두 글자짜리 끝 단어는 면적이 작아
+    점수가 0.5 를 못 넘고 통째로 버려진다. 그러면 8글자 중 6글자만 지워진다.
+    """
+
+    def __init__(self, limit_side_len=960, limit_type="max", box_thresh=0.3,
+                 unclip_ratio=2.0):
         self.engine = RapidOCR(det_limit_side_len=limit_side_len, det_limit_type=limit_type)
+        self.box_thresh, self.unclip_ratio = box_thresh, unclip_ratio
 
     def boxes(self, img):
-        """img(BGR) 안의 텍스트 사각형 목록을 반환."""
+        """img(BGR) 안의 텍스트 사각형 목록을 반환. 같은 줄의 박스는 하나로 합친다."""
         try:
-            res, _ = self.engine(img, use_det=True, use_cls=False, use_rec=False)
+            # 호출 인자로 넘긴다. rapidocr 는 kwargs 가 하나라도 오면 이 두 값을
+            # 기본값으로 덮어쓰므로 생성자 설정만 믿을 수 없다.
+            res, _ = self.engine(img, use_det=True, use_cls=False, use_rec=False,
+                                 box_thresh=self.box_thresh, unclip_ratio=self.unclip_ratio)
         except TypeError:
             # 구버전 시그니처 대응
             res, _ = self.engine(img)
@@ -45,7 +55,34 @@ class TextDetector:
                 out.append(_to_rect(item))
             except Exception:
                 continue
-        return out
+        return merge_lines(out)
+
+
+def merge_lines(boxes, gap=1.0):
+    """세로로 절반 이상 겹치고 가로 틈이 글자 높이(x gap) 이하인 박스를 합친다.
+
+    단어 사이 빈틈까지 마스크로 덮어 띄어쓰기 자리에 글자 조각이 남지 않게 한다.
+    틈 제한이 있어 같은 높이의 먼 워터마크와는 합쳐지지 않는다.
+    """
+    boxes = [list(b) for b in boxes]
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                a, b = boxes[i], boxes[j]
+                ha, hb = a[3] - a[1], b[3] - b[1]
+                overlap = min(a[3], b[3]) - max(a[1], b[1])
+                hgap = max(a[0], b[0]) - min(a[2], b[2])
+                if overlap >= 0.5 * min(ha, hb) and hgap <= gap * max(ha, hb):
+                    boxes[i] = [min(a[0], b[0]), min(a[1], b[1]),
+                                max(a[2], b[2]), max(a[3], b[3])]
+                    del boxes[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    return [tuple(b) for b in boxes]
 
 
 def boxes_to_mask(boxes, h, w, pad=3):
