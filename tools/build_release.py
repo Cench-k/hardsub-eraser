@@ -49,9 +49,9 @@ PKGS = [
     "opencv-python-headless==5.0.0.93",
     "numpy==2.4.6",
     "rapidocr-onnxruntime==1.4.4",
-    "tqdm==4.70.0",
-    "fastapi==0.141.1",
-    "uvicorn==0.52.3",
+    "tqdm==4.70.1",
+    "fastapi==0.142.2",
+    "uvicorn==0.54.0",
     "python-multipart",
 ]
 ORT_PKG = "onnxruntime-directml==1.24.4"
@@ -60,7 +60,7 @@ ORT_PKG = "onnxruntime-directml==1.24.4"
 # 미지원 + 배포 가중치가 TorchScript 라 dynamo 도 불가) 이 경로만 torch 가 필요하다.
 # CUDA 판은 2.8GB 라 넣을 수 없지만 CPU 판은 훨씬 작고, 사진 한 장이면 몇 초면 된다.
 # 영상은 그대로 onnxruntime(GPU) 을 쓴다.
-TORCH_PKG = "torch==2.13.0"
+TORCH_PKG = "torch==2.14.1"
 TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 
 # 한글을 절대 넣지 않는다. cmd.exe는 .bat을 OEM 코드페이지(한국어 Windows는 949)로
