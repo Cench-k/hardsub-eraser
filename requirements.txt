@@ -13,10 +13,10 @@
 opencv-python==5.0.0.93
 numpy==2.4.6
 rapidocr-onnxruntime==1.4.4
-tqdm==4.70.0
+tqdm==4.70.1
 
-fastapi==0.141.1
-uvicorn[standard]==0.52.3
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
 python-multipart
 
 # NVIDIA에서 더 빠르게 하고 싶으면 directml 대신:
